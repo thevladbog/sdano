@@ -1,0 +1,70 @@
+name: sdano
+
+services:
+  postgres:
+    image: postgres:18.4
+    profiles: [dev]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      # postgres:18+ images refuse to start with a volume mounted directly at
+      # /var/lib/postgresql/data (see docker-library/postgres#1259 and #37) —
+      # the entrypoint now expects a single mount at the parent directory and
+      # places data in a major-version-specific subdirectory itself.
+      - pg_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    profiles: [dev]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio-setup:
+    image: minio/mc:latest
+    profiles: [dev]
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $$S3_ACCESS_KEY $$S3_SECRET_KEY &&
+      mc mb --ignore-existing local/$$S3_BUCKET &&
+      echo 'bucket ready'
+      "
+
+  # Pinned Chrome for the PDF report renderer (reports plan). Present from day
+  # one so the compose topology is stable; pin an exact tag at first real use.
+  headless-shell:
+    image: chromedp/headless-shell:latest
+    profiles: [dev]
+    ports:
+      - "9222:9222"
+
+volumes:
+  pg_data:
+  minio_data:
