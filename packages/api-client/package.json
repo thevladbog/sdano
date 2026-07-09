@@ -1,0 +1,15 @@
+{
+  "name": "@sdano/api-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "generate": "orval --config ./orval.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "orval": "8.20.0",
+    "typescript": "7.0.2"
+  }
+}
