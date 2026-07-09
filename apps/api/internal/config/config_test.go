@@ -13,7 +13,7 @@ func validEnv() map[string]string {
 		"S3_BUCKET":     "sdano-evidence",
 		"S3_ACCESS_KEY": "k",
 		"S3_SECRET_KEY": "s",
-		"JWT_SECRET":    "secret",
+		"JWT_SECRET":    "test-secret-at-least-32-bytes-long!!",
 	}
 }
 
@@ -28,8 +28,8 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.S3Region != "us-east-1" {
 		t.Errorf("S3Region default = %q, want us-east-1", cfg.S3Region)
 	}
-	if cfg.JWTSecret != "secret" {
-		t.Errorf("JWTSecret = %q, want secret", cfg.JWTSecret)
+	if cfg.JWTSecret != "test-secret-at-least-32-bytes-long!!" {
+		t.Errorf("JWTSecret = %q, want test-secret-at-least-32-bytes-long!!", cfg.JWTSecret)
 	}
 }
 
@@ -46,6 +46,14 @@ func TestLoadRequiresJWTSecret(t *testing.T) {
 	delete(env, "JWT_SECRET")
 	if _, err := Load(fakeEnv(env)); err == nil {
 		t.Fatal("Load must fail without JWT_SECRET")
+	}
+}
+
+func TestLoadRejectsShortJWTSecret(t *testing.T) {
+	env := validEnv()
+	env["JWT_SECRET"] = "short"
+	if _, err := Load(fakeEnv(env)); err == nil {
+		t.Fatal("Load must fail when JWT_SECRET is shorter than 32 bytes")
 	}
 }
 

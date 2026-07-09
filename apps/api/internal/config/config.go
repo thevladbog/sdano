@@ -55,6 +55,11 @@ func Load(getenv func(string) string) (Config, error) {
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing required env vars: %v", missing)
 	}
+
+	const minJWTSecretLen = 32
+	if len(cfg.JWTSecret) < minJWTSecretLen {
+		return Config{}, fmt.Errorf("JWT_SECRET must be at least %d bytes for HS256 security", minJWTSecretLen)
+	}
 	return cfg, nil
 }
 

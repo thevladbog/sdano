@@ -3,16 +3,18 @@ package auth
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/danielgtaylor/huma/v2"
 	"golang.org/x/time/rate"
 )
 
-// RateLimiter throttles requests: public/auth ops by client IP (strict), other
-// ops by bearer token (generous). Buckets are kept in a mutex-guarded map;
-// cardinality is low (a handful of tokens/IPs at this scale) so eviction is a
-// later concern. Limits are tunable, not contract (see spec).
+// RateLimiter throttles requests: /api/v1/auth/* ops by client IP (strict),
+// other public/authenticated ops generously (by token when present, else IP).
+// Buckets are kept in a mutex-guarded map; cardinality is low (a handful of
+// tokens/IPs at this scale) so eviction is a later concern. Limits are
+// tunable, not contract (see spec).
 type RateLimiter struct {
 	authLimit rate.Limit
 	authBurst int
@@ -38,11 +40,12 @@ func (rl *RateLimiter) Middleware(ctx huma.Context, next func(huma.Context)) {
 	var key string
 	var limit rate.Limit
 	var burst int
-	if isPublic(ctx.Operation()) {
+	switch {
+	case strings.HasPrefix(ctx.Operation().Path, "/api/v1/auth/"):
 		key, limit, burst = "ip:"+clientIP(ctx), rl.authLimit, rl.authBurst
-	} else if tok := bearer(ctx); tok != "" {
-		key, limit, burst = "tok:"+tok, rl.normLimit, rl.normBurst
-	} else {
+	case bearer(ctx) != "":
+		key, limit, burst = "tok:"+bearer(ctx), rl.normLimit, rl.normBurst
+	default:
 		key, limit, burst = "ip:"+clientIP(ctx), rl.normLimit, rl.normBurst
 	}
 	if !rl.limiterFor(key, limit, burst).Allow() {

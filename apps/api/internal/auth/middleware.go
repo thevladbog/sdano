@@ -3,11 +3,13 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/jackc/pgx/v5"
 
 	"sdano.app/api/internal/db"
 )
@@ -78,11 +80,18 @@ func (a *Authenticator) Authorize(ctx huma.Context, next func(huma.Context)) {
 			writeProblem(ctx, http.StatusForbidden, "forbidden-role", "worker role required")
 			return
 		}
+	default:
+		writeProblem(ctx, http.StatusForbidden, "forbidden-role", "no role gate configured for this path")
+		return
 	}
 
 	status, err := a.q.GetTenantStatus(ctx.Context(), p.TenantID)
 	if err != nil {
-		writeProblem(ctx, http.StatusUnauthorized, "authentication-required", "unknown tenant")
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeProblem(ctx, http.StatusUnauthorized, "authentication-required", "unknown tenant")
+		} else {
+			writeProblem(ctx, http.StatusInternalServerError, "internal-error", "unable to verify tenant status")
+		}
 		return
 	}
 	switch status {
