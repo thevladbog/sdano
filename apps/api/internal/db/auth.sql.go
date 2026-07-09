@@ -29,7 +29,7 @@ const getActiveInvite = `-- name: GetActiveInvite :one
 SELECT i.id, i.tenant_id, i.user_id, u.display_name
 FROM worker_invite i
 JOIN app_user u ON u.id = i.user_id
-WHERE i.code = $1 AND i.used_at IS NULL AND i.expires_at > now()
+WHERE i.code = $1 AND i.used_at IS NULL AND i.expires_at > now() AND u.is_active
 `
 
 type GetActiveInviteRow struct {
