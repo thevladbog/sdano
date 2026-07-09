@@ -40,6 +40,13 @@ func buildAPI(t *testing.T) (humatest.TestAPI, *pgxpool.Pool) {
 		out.Body.OK = true
 		return out, nil
 	})
+	huma.Register(api, huma.Operation{
+		OperationID: "workerRead", Method: http.MethodGet, Path: "/api/v1/worker/thing",
+	}, func(context.Context, *struct{}) (*struct{ Body struct{ OK bool `json:"ok"` } }, error) {
+		out := &struct{ Body struct{ OK bool `json:"ok"` } }{}
+		out.Body.OK = true
+		return out, nil
+	})
 	return api, pool
 }
 
@@ -111,5 +118,46 @@ func TestTenantStatusGate(t *testing.T) {
 	// Mutations rejected 403 tenant-suspended.
 	if resp := api.Post("/api/v1/staff/thing", "Authorization: Bearer "+susp, map[string]any{}); resp.Code != http.StatusForbidden {
 		t.Errorf("suspended write: got %d, want 403; body %s", resp.Code, resp.Body)
+	}
+}
+
+func TestAuthorizeWorkerRoleGate(t *testing.T) {
+	api, pool := buildAPI(t)
+	tenant := seedTenant(t, pool, "active")
+
+	worker := staffToken(t, tenant, auth.RoleWorker)
+	if resp := api.Get("/api/v1/worker/thing", "Authorization: Bearer "+worker); resp.Code != http.StatusOK {
+		t.Errorf("worker read: got %d, want 200; body %s", resp.Code, resp.Body)
+	}
+	admin := staffToken(t, tenant, auth.RoleAdmin)
+	if resp := api.Get("/api/v1/worker/thing", "Authorization: Bearer "+admin); resp.Code != http.StatusForbidden {
+		t.Errorf("admin on worker route: got %d, want 403", resp.Code)
+	}
+}
+
+func TestAuthenticateWithDeviceToken(t *testing.T) {
+	api, pool := buildAPI(t)
+	ctx := context.Background()
+
+	tenant := seedTenant(t, pool, "active")
+	user := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO app_user (id, tenant_id, role, display_name, is_active) VALUES ($1, $2, 'worker'::user_role, 'Worker', true)`,
+		user, tenant); err != nil {
+		t.Fatalf("insert app_user: %v", err)
+	}
+
+	plain, _, err := auth.GenerateOpaqueToken()
+	if err != nil {
+		t.Fatalf("generate opaque token: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO device_token (tenant_id, user_id, token_hash) VALUES ($1, $2, $3)`,
+		tenant, user, auth.HashOpaqueToken(plain)); err != nil {
+		t.Fatalf("insert device_token: %v", err)
+	}
+
+	if resp := api.Get("/api/v1/worker/thing", "Authorization: Bearer "+plain); resp.Code != http.StatusOK {
+		t.Errorf("device token worker read: got %d, want 200; body %s", resp.Code, resp.Body)
 	}
 }
