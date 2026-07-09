@@ -19,6 +19,11 @@ type Config struct {
 	S3UsePathStyle bool
 	AdminOrigin    string // CORS origin; wired when apps/admin exists
 	JWTSecret      string
+	// TrustedProxyCount is the number of trusted reverse-proxy hops in front of
+	// the API. 0 (default) means the API is directly exposed; the limiter then
+	// keys on the TCP peer. Behind Caddy (prod compose profile) set this to 1 so
+	// the real client IP is read from X-Forwarded-For.
+	TrustedProxyCount int
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -36,6 +41,10 @@ func Load(getenv func(string) string) (Config, error) {
 
 	var err error
 	if cfg.S3UsePathStyle, err = parseBool(getenv, "S3_USE_PATH_STYLE"); err != nil {
+		return Config{}, err
+	}
+
+	if cfg.TrustedProxyCount, err = parseCount(getenv, "TRUSTED_PROXY_COUNT"); err != nil {
 		return Config{}, err
 	}
 
@@ -80,4 +89,20 @@ func parseBool(getenv func(string) string, name string) (bool, error) {
 		return false, errors.Join(fmt.Errorf("parsing %s", name), err)
 	}
 	return b, nil
+}
+
+// parseCount reads a non-negative integer env var, defaulting to 0 when unset.
+func parseCount(getenv func(string) string, name string) (int, error) {
+	raw := getenv(name)
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, errors.Join(fmt.Errorf("parsing %s", name), err)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("%s must be >= 0, got %d", name, n)
+	}
+	return n, nil
 }

@@ -41,10 +41,16 @@ type healthOutput struct {
 func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 	router := chi.NewMux()
 	router.Use(middleware.RequestID)
-	// NOTE: middleware.RealIP is intentionally not used — it is deprecated
-	// upstream as vulnerable to IP spoofing (GHSA-3fxj-6jh8-hvhx). Once a
-	// reverse proxy with a known trusted-proxy CIDR list is introduced,
-	// wire up middleware.ClientIPFromXFFTrustedProxies instead.
+	// Behind a reverse proxy (the prod compose profile puts Caddy in front of
+	// the API — see deploy/Caddyfile), the direct TCP peer is always the proxy,
+	// so per-IP rate limiting would collapse to a single bucket. When
+	// TRUSTED_PROXY_COUNT > 0 we resolve the real client from X-Forwarded-For via
+	// chi's trusted-proxy middleware (it stores the IP in a context value the
+	// rate limiter reads). middleware.RealIP is intentionally NOT used — it is
+	// deprecated upstream as IP-spoofable (GHSA-3fxj-6jh8-hvhx).
+	if cfg.TrustedProxyCount > 0 {
+		router.Use(middleware.ClientIPFromXFFTrustedProxies(cfg.TrustedProxyCount))
+	}
 
 	humaCfg := huma.DefaultConfig("Sdano API", "0.1.0")
 	humaCfg.Info.Description = "Photo-evidence and reporting platform for field service contractors."
@@ -75,8 +81,13 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 
 	queries := db.New(deps.Pool)
 	authn := auth.NewAuthenticator(cfg.JWTSecret, queries)
-	rl := auth.NewRateLimiter(10, 300) // 10/min on auth endpoints, 300/min authenticated
-	api.UseMiddleware(rl.Middleware, authn.Authenticate, authn.Authorize)
+	rl := auth.NewRateLimiter(auth.RateLimitConfig{
+		AuthPerMin:      10,   // /api/v1/auth/* per client IP
+		HealthzPerMin:   60,   // /healthz per client IP (isolated)
+		IPCeilingPerMin: 3000, // pre-auth DoS backstop per client IP; ~10x the per-principal budget so it does not undercut per-principal fairness for up to ~10 concurrently-active workers behind one shared carrier-NAT IP
+		PrincipalPerMin: 300,  // authenticated ops, per verified principal
+	})
+	api.UseMiddleware(rl.LimitByIP, authn.Authenticate, rl.LimitByPrincipal, authn.Authorize)
 
 	// Route registration only wires up schema + handler closures; it never
 	// touches deps.Pool until a request actually runs. Registering
