@@ -1,0 +1,4 @@
+# Production reverse proxy (docs/10-deployment.md). Used by the prod profile only.
+{$API_DOMAIN:api.localhost} {
+	reverse_proxy api:8080
+}
