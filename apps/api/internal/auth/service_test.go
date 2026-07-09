@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,6 +70,202 @@ func TestLoginRefreshRotationAndReuseRevokesChain(t *testing.T) {
 	}
 	if _, err := svc.Refresh(ctx, pair.RefreshToken); !errors.Is(err, auth.ErrInvalidRefresh) {
 		t.Errorf("after reuse-detection, R2 must be revoked, got %v", err)
+	}
+}
+
+// mintRefreshToken inserts a fresh, live refresh token for the user and returns
+// its plaintext — a cheap stand-in for Login that skips argon2id in hot loops.
+func mintRefreshToken(t *testing.T, pool *pgxpool.Pool, tenant, user uuid.UUID) string {
+	t.Helper()
+	plain, hash, err := auth.GenerateOpaqueToken()
+	if err != nil {
+		t.Fatalf("mint token: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO refresh_token (tenant_id, user_id, token_hash, expires_at)
+		 VALUES ($1, $2, $3, now() + interval '30 days')`, tenant, user, hash); err != nil {
+		t.Fatalf("insert refresh token: %v", err)
+	}
+	return plain
+}
+
+// countUnrevokedRefreshTokens returns how many of the user's refresh tokens are
+// still live (revoked_at IS NULL) — the survivors of a chain revocation.
+func countUnrevokedRefreshTokens(t *testing.T, pool *pgxpool.Pool, user uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM refresh_token WHERE user_id = $1 AND revoked_at IS NULL`,
+		user).Scan(&n); err != nil {
+		t.Fatalf("count unrevoked: %v", err)
+	}
+	return n
+}
+
+// TestConcurrentRefreshOfSameTokenElectsOneWinner fires N concurrent refreshes
+// of the same token. Exactly one may rotate; every other must be rejected as a
+// reuse (never a double-spend). Because concurrent double-use is indistinguishable
+// from theft, the chain must end fully revoked.
+func TestConcurrentRefreshOfSameTokenElectsOneWinner(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, user := seedStaff(t, pool, "solo@acme.test", "hunter2hunter2")
+	svc := auth.NewService(pool, testSecret)
+
+	const n = 8
+	r1 := mintRefreshToken(t, pool, tenant, user)
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, errs[i] = svc.Refresh(ctx, r1)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	winners := 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			winners++
+		case errors.Is(err, auth.ErrInvalidRefresh):
+			// expected loser
+		default:
+			t.Errorf("call %d: unexpected error class: %v", i, err)
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("exactly one concurrent refresh must win, got %d", winners)
+	}
+	if got := countUnrevokedRefreshTokens(t, pool, user); got != 0 {
+		t.Fatalf("concurrent double-use must revoke the whole chain, %d token(s) survived", got)
+	}
+}
+
+// TestConcurrentReuseAndRotationRevokesEntireChain races a legitimate rotation
+// against attackers replaying a stolen, already-spent token. The reuse trips
+// theft detection, which must revoke the ENTIRE chain — including the token the
+// rotation inserts concurrently. If chain revocation's snapshot misses that
+// not-yet-committed row, the thief keeps a live chain. This is the residual race.
+func TestConcurrentReuseAndRotationRevokesEntireChain(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, user := seedStaff(t, pool, "race@acme.test", "hunter2hunter2")
+	svc := auth.NewService(pool, testSecret)
+
+	const iterations = 100
+	const reusers = 4
+	for i := 0; i < iterations; i++ {
+		// Fresh chain: R1 (live) -> R2 (live); R1 is now spent.
+		r1 := mintRefreshToken(t, pool, tenant, user)
+		pair, err := svc.Refresh(ctx, r1)
+		if err != nil {
+			t.Fatalf("iter %d seed rotate: %v", i, err)
+		}
+		r2 := pair.RefreshToken
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		wg.Add(1 + reusers)
+		go func() { defer wg.Done(); <-start; _, _ = svc.Refresh(ctx, r2) }() // legit rotation R2->R3
+		for j := 0; j < reusers; j++ {
+			go func() { defer wg.Done(); <-start; _, _ = svc.Refresh(ctx, r1) }() // reuse of spent R1
+		}
+		close(start)
+		wg.Wait()
+
+		if got := countUnrevokedRefreshTokens(t, pool, user); got != 0 {
+			t.Fatalf("iter %d: reuse of a spent token must revoke the whole chain, but %d token(s) survived", i, got)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM refresh_token WHERE user_id = $1`, user); err != nil {
+			t.Fatalf("iter %d cleanup: %v", i, err)
+		}
+	}
+}
+
+// waitForLockWaiters blocks until at least want backends in this database are
+// parked on a heavyweight/row lock, giving concurrency tests a deterministic
+// join point instead of a sleep.
+func waitForLockWaiters(t *testing.T, pool *pgxpool.Pool, want int) {
+	t.Helper()
+	ctx := context.Background()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM pg_stat_activity
+			 WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&n); err != nil {
+			t.Fatalf("poll lock waiters: %v", err)
+		}
+		if n >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %d lock waiter(s), saw %d", want, n)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// TestReuseRevocationDoesNotMissConcurrentRotation deterministically pins the
+// residual race: a chain revocation (triggered by reuse of a stolen, spent
+// token) must not miss a refresh row that a concurrent rotation is inserting.
+//
+// It parks both operations on a test-held app_user lock so the revocation takes
+// its MVCC snapshot *before* the rotation's new token commits — the exact
+// window in which a READ COMMITTED snapshot would skip that row. Serializing
+// rotation and revocation on the per-user lock is what forces the revocation to
+// see the rotated-in token.
+func TestReuseRevocationDoesNotMissConcurrentRotation(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, user := seedStaff(t, pool, "det@acme.test", "hunter2hunter2")
+	svc := auth.NewService(pool, testSecret)
+
+	// Chain: R1 (spent) -> R2 (live).
+	r1 := mintRefreshToken(t, pool, tenant, user)
+	pair, err := svc.Refresh(ctx, r1)
+	if err != nil {
+		t.Fatalf("seed rotate: %v", err)
+	}
+	r2 := pair.RefreshToken
+
+	// Hold app_user(user) exclusively. The rotation parks here — either at its
+	// InsertRefreshToken (FK KEY SHARE vs our FOR UPDATE) or, once fixed, at its
+	// own per-user LockUser — with R2 not yet rotated to a committed R3.
+	holdTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("hold begin: %v", err)
+	}
+	defer func() { _ = holdTx.Rollback(ctx) }()
+	if _, err := holdTx.Exec(ctx, `SELECT id FROM app_user WHERE id = $1 FOR UPDATE`, user); err != nil {
+		t.Fatalf("hold lock: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); _, _ = svc.Refresh(ctx, r2) }() // legit rotation R2 -> R3
+	waitForLockWaiters(t, pool, 1)
+
+	// Attacker replays the spent R1: its chain revocation snapshots the chain
+	// now, before R3 can commit, then parks.
+	go func() { defer wg.Done(); _, _ = svc.Refresh(ctx, r1) }() // reuse of spent R1
+	waitForLockWaiters(t, pool, 2)
+
+	// Let both proceed. The rotation commits R3; the revocation must still cover it.
+	if err := holdTx.Commit(ctx); err != nil {
+		t.Fatalf("hold commit: %v", err)
+	}
+	wg.Wait()
+
+	if got := countUnrevokedRefreshTokens(t, pool, user); got != 0 {
+		t.Fatalf("reuse revocation missed a concurrently rotated-in token: %d survived", got)
 	}
 }
 
