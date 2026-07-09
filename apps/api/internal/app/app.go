@@ -82,6 +82,7 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 	// unconditionally means `go run ./cmd/api openapi` (which builds the app
 	// with a nil pool) still emits listStaffObjects in the spec.
 	object.Register(api, queries)
+	auth.RegisterAuthRoutes(api, auth.NewService(deps.Pool, cfg.JWTSecret))
 
 	huma.Register(api, huma.Operation{
 		OperationID: "healthz",
