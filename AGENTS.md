@@ -36,6 +36,7 @@ You are working on **Sdano** — a photo-evidence and reporting platform for fie
 - **Before coding:** read the relevant doc (`docs/06` for schema work, `docs/07` for API, `docs/08` for anything mobile-sync, `docs/09` for reports). If your change contradicts a doc, update the doc in the same PR — docs and code never diverge silently.
 - **Migrations:** additive and backward-compatible (code version N must run on schema N+1). Never edit an applied migration; add a new one. Every migration has a working `down`.
 - **Generated code:** after changing `db/queries/*.sql` run sqlc; after changing API handler types, regenerate the OpenAPI spec and orval clients. Commit generated output.
+- **Dependencies:** adopt the latest stable, security-clean version; check the current version and API via context7 before adding or upgrading; pin exactly (`go.sum`, `package-lock.json`). `govulncheck` and `npm audit` gate CI.
 - **Tests:** the offline sync component and idempotency guarantees have priority test coverage (property-style: replay any prefix of the outbox in any order → same DB state). Don't add tests for trivial CRUD just for coverage numbers; do add a test for every bug you fix.
 - **Errors:** RFC 7807 problem+json with stable `type` slugs on the API. In Go, wrap with context (`fmt.Errorf("presigning photo %s: %w", ...)`); no naked error returns across package boundaries.
 - **Logging:** structured slog, no fmt.Println. Never log photo URLs with credentials, tokens, or invite codes.

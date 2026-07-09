@@ -11,4 +11,6 @@ node_modules/
 dist/
 .nx/
 *.log
+apps/api/bin/
+coverage/
 .superpowers/

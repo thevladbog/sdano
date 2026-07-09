@@ -61,6 +61,7 @@ No coverage targets. A missing test for critical paths blocks merge; a missing t
 - Presigned URL lifetimes: 15 min PUT / 5 min GET — changing these is a security decision, not a convenience tweak.
 - The production S3 credential has no DELETE permission (evidence protection); local/dev MinIO may differ. Code must therefore never *rely* on being able to delete objects.
 - Dependencies: renovate/dependabot on; a new dependency needs a sentence of justification in the PR ("no stdlib/existing-dep way to do X reasonably").
+- **Version policy:** every dependency is adopted at its latest stable, security-clean version at the time of adoption. Before adding or upgrading, verify the current version and API against live documentation (context7 for AI agents); pin exact versions (`go.mod`/`go.sum`, `package-lock.json`). `govulncheck` (Go) and `npm audit` (TS) run in CI and block merge on known vulnerabilities. Upgrades land as dedicated PRs, never bundled into feature work.
 
 ## 8. AI-assisted development
 
