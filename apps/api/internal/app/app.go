@@ -47,8 +47,30 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 
 	humaCfg := huma.DefaultConfig("Sdano API", "0.1.0")
 	humaCfg.Info.Description = "Photo-evidence and reporting platform for field service contractors."
-	humaCfg.DocsPath = "/docs"
+	// Disable huma's built-in docs page (Stoplight Elements); we serve
+	// Scalar's standalone viewer at /docs instead (see below), per docs/02.
+	// The OpenAPI spec routes (/openapi.json etc.) stay enabled — Scalar
+	// fetches the spec from there.
+	humaCfg.DocsPath = ""
 	api := humachi.New(router, humaCfg)
+
+	// Scalar API reference at /docs, per docs/02-architecture.md
+	// ("huma: typed handlers → OpenAPI 3.1 + built-in Scalar docs").
+	router.Get("/docs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html>
+<html>
+<head>
+  <title>Sdano API Docs</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+</head>
+<body>
+  <script id="api-reference" data-url="/openapi.json"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+</body>
+</html>`))
+	})
 
 	api.UseMiddleware(auth.NewDevTenantHeader(api, cfg.DevTenantHeaderAuth))
 
