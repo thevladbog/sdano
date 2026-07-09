@@ -17,8 +17,10 @@ FROM refresh_token r
 JOIN app_user u ON u.id = r.user_id
 WHERE r.token_hash = $1;
 
--- name: MarkRefreshTokenUsed :exec
-UPDATE refresh_token SET used_at = now() WHERE id = $1;
+-- name: MarkRefreshTokenUsed :one
+UPDATE refresh_token SET used_at = now()
+WHERE id = $1 AND used_at IS NULL
+RETURNING id;
 
 -- name: RevokeUserRefreshTokens :exec
 UPDATE refresh_token SET revoked_at = now()

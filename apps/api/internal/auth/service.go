@@ -101,18 +101,47 @@ func (s *Service) Refresh(ctx context.Context, refreshPlaintext string) (TokenPa
 		}
 		return TokenPair{}, ErrInvalidRefresh
 	}
-	if err := s.q.MarkRefreshTokenUsed(ctx, r.ID); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return TokenPair{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := s.q.WithTx(tx)
+
+	// Conditional mark-used closes the concurrent-double-use race: if another
+	// refresh already spent this token between our read and now, ClaimInvite-style
+	// it affects no rows -> pgx.ErrNoRows -> treat as reuse and revoke the chain.
+	if _, err := qtx.MarkRefreshTokenUsed(ctx, r.ID); errors.Is(err, pgx.ErrNoRows) {
+		// Roll back this tx, then revoke the chain on the pool (not the aborted tx).
+		_ = tx.Rollback(ctx)
+		if err := s.q.RevokeUserRefreshTokens(ctx, r.UserID); err != nil {
+			return TokenPair{}, fmt.Errorf("revoking chain: %w", err)
+		}
+		return TokenPair{}, ErrInvalidRefresh
+	} else if err != nil {
 		return TokenPair{}, fmt.Errorf("marking used: %w", err)
 	}
+
 	access, err := IssueAccessToken(s.secret, Principal{UserID: r.UserID, TenantID: r.TenantID, Role: Role(r.Role)}, AccessTTL)
 	if err != nil {
 		return TokenPair{}, err
 	}
-	refresh, err := s.issueRefresh(ctx, r.TenantID, r.UserID)
+	plain, hash, err := GenerateOpaqueToken()
 	if err != nil {
 		return TokenPair{}, err
 	}
-	return TokenPair{AccessToken: access, RefreshToken: refresh}, nil
+	if err := qtx.InsertRefreshToken(ctx, db.InsertRefreshTokenParams{
+		TenantID:  r.TenantID,
+		UserID:    r.UserID,
+		TokenHash: hash,
+		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(RefreshTTL), Valid: true},
+	}); err != nil {
+		return TokenPair{}, fmt.Errorf("inserting refresh token: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return TokenPair{}, fmt.Errorf("commit: %w", err)
+	}
+	return TokenPair{AccessToken: access, RefreshToken: plain}, nil
 }
 
 func (s *Service) Logout(ctx context.Context, refreshPlaintext string) error {

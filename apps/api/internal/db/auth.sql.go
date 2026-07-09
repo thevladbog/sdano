@@ -188,13 +188,17 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 	return err
 }
 
-const markRefreshTokenUsed = `-- name: MarkRefreshTokenUsed :exec
-UPDATE refresh_token SET used_at = now() WHERE id = $1
+const markRefreshTokenUsed = `-- name: MarkRefreshTokenUsed :one
+UPDATE refresh_token SET used_at = now()
+WHERE id = $1 AND used_at IS NULL
+RETURNING id
 `
 
-func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markRefreshTokenUsed, id)
-	return err
+func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, markRefreshTokenUsed, id)
+	var id_2 uuid.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
 }
 
 const revokeRefreshToken = `-- name: RevokeRefreshToken :exec
