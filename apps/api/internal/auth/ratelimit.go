@@ -5,72 +5,175 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/go-chi/chi/v5/middleware"
 	"golang.org/x/time/rate"
 )
 
-// RateLimiter throttles requests: /api/v1/auth/* ops by client IP (strict),
-// other public/authenticated ops generously (by token when present, else IP).
-// Buckets are kept in a mutex-guarded map; cardinality is low (a handful of
-// tokens/IPs at this scale) so eviction is a later concern. Limits are
-// tunable, not contract (see spec).
+// RateLimitConfig carries the per-minute request budgets for the limiter's four
+// classes. Budgets are tunable, not contract (see the auth spec).
+type RateLimitConfig struct {
+	AuthPerMin      int // /api/v1/auth/* per client IP (brute-force target)
+	HealthzPerMin   int // /healthz per client IP (isolated from the other classes)
+	IPCeilingPerMin int // every other route, per client IP, pre-auth (a DoS backstop)
+	PrincipalPerMin int // authenticated ops, per verified principal (fair per-worker quota)
+}
+
+// RateLimiter throttles requests in two tiers. LimitByIP runs first, before
+// authentication, keyed on the real client IP (resolved from the trusted proxy
+// — see clientIP): a strict class for /api/v1/auth/*, an isolated class for
+// /healthz, and a generous ceiling on everything else. LimitByPrincipal runs
+// after authentication, keyed on the verified principal, giving each worker
+// fair quota even when many share one carrier-grade-NAT IP.
+//
+// Buckets live in a mutex-guarded map bounded by lazy TTL eviction. Keys are
+// only IP strings and principal UUIDs — never bearer tokens — so no secret
+// material is ever retained.
 type RateLimiter struct {
-	authLimit rate.Limit
-	authBurst int
-	normLimit rate.Limit
-	normBurst int
+	auth      limit
+	healthz   limit
+	ipCeiling limit
+	principal limit
 
 	mu      sync.Mutex
-	buckets map[string]*rate.Limiter
+	buckets map[string]*bucket
+	// now is the clock, overridable in tests for deterministic eviction.
+	now       func() time.Time
+	lastSweep time.Time
 }
+
+// limit is a rate/burst pair derived from a per-minute budget.
+type limit struct {
+	rate  rate.Limit
+	burst int
+}
+
+// bucket is a token-bucket limiter tagged with its last-access time for eviction.
+type bucket struct {
+	lim      *rate.Limiter
+	lastSeen time.Time
+}
+
+const (
+	// idleBucketTTL is how long a bucket may sit unused before eviction. It is
+	// far longer than any refill window (the strictest class refills within a
+	// minute), so evicting an idle bucket never discards live throttle state —
+	// an idle bucket would have refilled to full anyway.
+	idleBucketTTL = 15 * time.Minute
+	// sweepInterval bounds how often we scan the map for idle buckets.
+	sweepInterval = 5 * time.Minute
+	// maxBuckets forces an out-of-schedule sweep if cardinality spikes.
+	maxBuckets = 100_000
+
+	healthzPath = "/healthz"
+	authPrefix  = "/api/v1/auth/"
+)
 
 // NewRateLimiter builds a limiter from per-minute request budgets.
-func NewRateLimiter(authPerMin, normalPerMin int) *RateLimiter {
+func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
 	return &RateLimiter{
-		authLimit: rate.Limit(float64(authPerMin) / 60.0),
-		authBurst: authPerMin,
-		normLimit: rate.Limit(float64(normalPerMin) / 60.0),
-		normBurst: normalPerMin,
-		buckets:   make(map[string]*rate.Limiter),
+		auth:      newLimit(cfg.AuthPerMin),
+		healthz:   newLimit(cfg.HealthzPerMin),
+		ipCeiling: newLimit(cfg.IPCeilingPerMin),
+		principal: newLimit(cfg.PrincipalPerMin),
+		buckets:   make(map[string]*bucket),
+		now:       time.Now,
 	}
 }
 
-func (rl *RateLimiter) Middleware(ctx huma.Context, next func(huma.Context)) {
+// newLimit converts a per-minute budget into a rate/burst pair: the burst is the
+// whole per-minute allowance, refilled steadily over the minute.
+func newLimit(perMin int) limit {
+	return limit{rate: rate.Limit(float64(perMin) / 60.0), burst: perMin}
+}
+
+// LimitByIP is the pre-authentication tier. It keys every request on the real
+// client IP and selects the class by path. It must run first in the chain, before
+// Authenticate, so a flood is refused before it can cost a database lookup.
+func (rl *RateLimiter) LimitByIP(ctx huma.Context, next func(huma.Context)) {
+	ip := clientIP(ctx)
 	var key string
-	var limit rate.Limit
-	var burst int
-	switch {
-	case strings.HasPrefix(ctx.Operation().Path, "/api/v1/auth/"):
-		key, limit, burst = "ip:"+clientIP(ctx), rl.authLimit, rl.authBurst
-	case bearer(ctx) != "":
-		key, limit, burst = "tok:"+bearer(ctx), rl.normLimit, rl.normBurst
+	var l limit
+	switch path := ctx.Operation().Path; {
+	case path == healthzPath:
+		key, l = "h:"+ip, rl.healthz
+	case strings.HasPrefix(path, authPrefix):
+		key, l = "a:"+ip, rl.auth
 	default:
-		key, limit, burst = "ip:"+clientIP(ctx), rl.normLimit, rl.normBurst
+		key, l = "g:"+ip, rl.ipCeiling
 	}
-	if !rl.limiterFor(key, limit, burst).Allow() {
+	if !rl.allow(key, l) {
 		writeProblem(ctx, http.StatusTooManyRequests, "rate-limited", "too many requests")
 		return
 	}
 	next(ctx)
 }
 
-func (rl *RateLimiter) limiterFor(key string, limit rate.Limit, burst int) *rate.Limiter {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	l, ok := rl.buckets[key]
-	if !ok {
-		l = rate.NewLimiter(limit, burst)
-		rl.buckets[key] = l
+// LimitByPrincipal is the post-authentication tier. It keys on the verified
+// principal so shared-IP workers each get fair quota. Public operations (which
+// carry no principal) pass through — they are already covered by LimitByIP.
+func (rl *RateLimiter) LimitByPrincipal(ctx huma.Context, next func(huma.Context)) {
+	if isPublic(ctx.Operation()) {
+		next(ctx)
+		return
 	}
-	return l
+	p, ok := PrincipalFrom(ctx.Context())
+	if !ok {
+		// Authenticate rejects non-public requests without a principal, so this
+		// is defensive: never throttle what we cannot attribute.
+		next(ctx)
+		return
+	}
+	if !rl.allow("p:"+p.TenantID.String()+":"+p.UserID.String(), rl.principal) {
+		writeProblem(ctx, http.StatusTooManyRequests, "rate-limited", "too many requests")
+		return
+	}
+	next(ctx)
 }
 
-// clientIP extracts the connecting peer's address, stripping the port if
-// present. There is no trusted-proxy header parsing here (see the RealIP
-// note in app.go) — this is the direct TCP peer, which is what we want for
-// a middleware guarding against a single misbehaving client.
+// allow reports whether the bucket for key admits one more request, creating the
+// bucket on first use and refreshing its last-seen time.
+func (rl *RateLimiter) allow(key string, l limit) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := rl.now()
+	b, ok := rl.buckets[key]
+	if !ok {
+		rl.sweep(now)
+		b = &bucket{lim: rate.NewLimiter(l.rate, l.burst)}
+		rl.buckets[key] = b
+	}
+	b.lastSeen = now
+	return b.lim.Allow()
+}
+
+// sweep evicts idle buckets. It runs on bucket creation but only does work once
+// per sweepInterval or when the map exceeds maxBuckets, so the common path stays
+// cheap. The caller holds rl.mu.
+func (rl *RateLimiter) sweep(now time.Time) {
+	if len(rl.buckets) < maxBuckets && now.Sub(rl.lastSweep) < sweepInterval {
+		return
+	}
+	for k, b := range rl.buckets {
+		if now.Sub(b.lastSeen) > idleBucketTTL {
+			delete(rl.buckets, k)
+		}
+	}
+	rl.lastSweep = now
+}
+
+// clientIP returns the real client IP for rate-limit keying. Behind a trusted
+// reverse proxy (TRUSTED_PROXY_COUNT > 0) app.New installs chi's
+// ClientIPFromXFFTrustedProxies, which resolves the client from X-Forwarded-For
+// into a request-context value; we read it here. With no trusted proxy
+// configured (dev, tests, or a request that reached us without the header) we
+// fall back to the direct TCP peer.
 func clientIP(ctx huma.Context) string {
+	if ip := middleware.GetClientIP(ctx.Context()); ip != "" {
+		return ip
+	}
 	if host, _, err := net.SplitHostPort(ctx.RemoteAddr()); err == nil {
 		return host
 	}
