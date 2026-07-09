@@ -52,9 +52,11 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 
 	api.UseMiddleware(auth.NewDevTenantHeader(api, cfg.DevTenantHeaderAuth))
 
-	if deps.Pool != nil {
-		object.Register(api, db.New(deps.Pool))
-	}
+	// Route registration only wires up schema + handler closures; it never
+	// touches deps.Pool until a request actually runs. Registering
+	// unconditionally means `go run ./cmd/api openapi` (which builds the app
+	// with a nil pool) still emits listStaffObjects in the spec.
+	object.Register(api, db.New(deps.Pool))
 
 	huma.Register(api, huma.Operation{
 		OperationID: "healthz",
