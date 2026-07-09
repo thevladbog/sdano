@@ -18,6 +18,7 @@ import (
 	"sdano.app/api/internal/config"
 	"sdano.app/api/internal/db"
 	"sdano.app/api/internal/object"
+	"sdano.app/api/internal/workorder"
 )
 
 // HealthCheck is a named dependency probe run by GET /healthz.
@@ -94,6 +95,7 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 	// unconditionally means `go run ./cmd/api openapi` (which builds the app
 	// with a nil pool) still emits listStaffObjects in the spec.
 	object.Register(api, queries)
+	workorder.Register(api, deps.Pool)
 	auth.RegisterAuthRoutes(api, auth.NewService(deps.Pool, cfg.JWTSecret))
 
 	huma.Register(api, huma.Operation{

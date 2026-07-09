@@ -32,6 +32,19 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
     : T[P];
 } : DistributeReadOnlyOverUnions<T>;
 
+export interface ChecklistItem {
+  id: string;
+  position: number;
+  requires_photo: boolean;
+  title: string;
+}
+
+export interface Checklist {
+  /** @nullable */
+  items: ChecklistItem[] | null;
+  version_id: string;
+}
+
 export interface ClaimInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -146,6 +159,37 @@ export interface RefreshInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   refresh_token: string;
+}
+
+export interface TodayObject {
+  /** @nullable */
+  address: string | null;
+  id: string;
+  /** @nullable */
+  lat: number | null;
+  /** @nullable */
+  lon: number | null;
+  name: string;
+  /** @nullable */
+  qr_token: string | null;
+}
+
+export interface TodayOrder {
+  checklist: Checklist;
+  due_date: string;
+  id: string;
+  object_id: string;
+  status: string;
+}
+
+export interface TodayOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  generated_at: string;
+  /** @nullable */
+  objects: TodayObject[] | null;
+  /** @nullable */
+  work_orders: TodayOrder[] | null;
 }
 
 export interface TokenPairOutputBody {
@@ -408,6 +452,56 @@ export const listStaffObjects = async ( options?: RequestInit): Promise<listStaf
 
   const data: listStaffObjectsResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as listStaffObjectsResponse
+}
+
+
+
+export type workerTodayResponse200 = {
+  data: TodayOutputBody
+  status: 200
+}
+
+export type workerTodayResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type workerTodayResponseSuccess = (workerTodayResponse200) & {
+  headers: Headers;
+};
+export type workerTodayResponseError = (workerTodayResponseDefault) & {
+  headers: Headers;
+};
+
+export type workerTodayResponse = (workerTodayResponseSuccess | workerTodayResponseError)
+
+export const getWorkerTodayUrl = () => {
+
+
+
+
+  return `/api/v1/worker/today`
+}
+
+/**
+ * @summary Worker's working set for today
+ */
+export const workerToday = async ( options?: RequestInit): Promise<workerTodayResponse> => {
+
+  const res = await fetch(getWorkerTodayUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: workerTodayResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as workerTodayResponse
 }
 
 

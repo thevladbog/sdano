@@ -1,6 +1,53 @@
 {
   "components": {
     "schemas": {
+      "Checklist": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChecklistItem"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "version_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "items"
+        ],
+        "type": "object"
+      },
+      "ChecklistItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "position": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "requires_photo": {
+            "type": "boolean"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "position",
+          "title",
+          "requires_photo"
+        ],
+        "type": "object"
+      },
       "ClaimInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -350,6 +397,122 @@
         ],
         "type": "object"
       },
+      "TodayObject": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "lat": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "lon": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "qr_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "address",
+          "lat",
+          "lon",
+          "qr_token"
+        ],
+        "type": "object"
+      },
+      "TodayOrder": {
+        "additionalProperties": false,
+        "properties": {
+          "checklist": {
+            "$ref": "#/components/schemas/Checklist"
+          },
+          "due_date": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "object_id",
+          "due_date",
+          "status",
+          "checklist"
+        ],
+        "type": "object"
+      },
+      "TodayOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/TodayOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/components/schemas/TodayObject"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "work_orders": {
+            "items": {
+              "$ref": "#/components/schemas/TodayOrder"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "generated_at",
+          "objects",
+          "work_orders"
+        ],
+        "type": "object"
+      },
       "TokenPairOutputBody": {
         "additionalProperties": false,
         "properties": {
@@ -612,6 +775,37 @@
         "summary": "List active objects",
         "tags": [
           "staff"
+        ]
+      }
+    },
+    "/api/v1/worker/today": {
+      "get": {
+        "operationId": "workerToday",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodayOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Worker's working set for today",
+        "tags": [
+          "worker"
         ]
       }
     },
