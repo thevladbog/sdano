@@ -75,7 +75,8 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 
 	queries := db.New(deps.Pool)
 	authn := auth.NewAuthenticator(cfg.JWTSecret, queries)
-	api.UseMiddleware(authn.Authenticate, authn.Authorize)
+	rl := auth.NewRateLimiter(10, 300) // 10/min on auth endpoints, 300/min authenticated
+	api.UseMiddleware(rl.Middleware, authn.Authenticate, authn.Authorize)
 
 	// Route registration only wires up schema + handler closures; it never
 	// touches deps.Pool until a request actually runs. Registering
