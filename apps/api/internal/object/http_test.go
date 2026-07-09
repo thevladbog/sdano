@@ -137,3 +137,39 @@ func TestWorkerObjectByQR(t *testing.T) {
 		t.Errorf("unknown qr: got %d, want 404", rec404.Code)
 	}
 }
+
+func TestWorkerObjectByQRNoOrderToday(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, worker := uuid.New(), uuid.New()
+	object := uuid.New()
+	must := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	must(`INSERT INTO tenant (id,name) VALUES ($1,'Acme')`, tenant)
+	must(`INSERT INTO app_user (id,tenant_id,role,display_name) VALUES ($1,$2,'worker','A')`, worker, tenant)
+	must(`INSERT INTO object (id,tenant_id,name,qr_token) VALUES ($1,$2,'Lenina 45','QR-NO-ORDER')`, object, tenant)
+
+	router, _ := app.New(config.Config{JWTSecret: testSecret}, app.Deps{Pool: pool})
+	get := func(token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/worker/objects/by-qr/"+token, nil)
+		req.Header.Set("Authorization", bearerAs(t, tenant, worker, auth.RoleWorker))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	rec := get("QR-NO-ORDER")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("qr resolve: got %d; body %s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Lenina 45") {
+		t.Errorf("qr body must carry the object; body %s", body)
+	}
+	if strings.Contains(body, "today_work_order") {
+		t.Errorf("today_work_order should be omitted when no order due today; body %s", body)
+	}
+}

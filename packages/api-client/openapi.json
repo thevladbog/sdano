@@ -816,8 +816,7 @@
           }
         },
         "required": [
-          "object",
-          "today_work_order"
+          "object"
         ],
         "type": "object"
       },

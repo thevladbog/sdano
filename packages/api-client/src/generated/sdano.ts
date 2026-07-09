@@ -287,7 +287,7 @@ export interface QrOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   object: QrObject;
-  today_work_order: QrTodayOrder;
+  today_work_order?: QrTodayOrder;
 }
 
 export interface RefreshInputBody {

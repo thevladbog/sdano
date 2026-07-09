@@ -103,7 +103,7 @@ type qrInput struct {
 type qrOutput struct {
 	Body struct {
 		Object         qrObject      `json:"object"`
-		TodayWorkOrder *qrTodayOrder `json:"today_work_order"`
+		TodayWorkOrder *qrTodayOrder `json:"today_work_order,omitempty"`
 	}
 }
 
