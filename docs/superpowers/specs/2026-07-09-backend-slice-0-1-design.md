@@ -24,7 +24,7 @@ Stand up the entire backend needed for the slice-1 demo: monorepo foundation, fu
 
 **Out of scope (deferred, not forgotten)**
 - Issues API and issues PDF section (slice 2), public QR (slice 4).
-- `apps/admin` (Next.js) and `apps/mobile` (Expo) — created in later phases; empty skeletons deliberately not scaffolded now (they would rot unused while versions move on).
+- `apps/admin` (Next.js) and `apps/mobile` (Expo) implementations — the directories exist as placeholders in the root layout (see Repository structure), but the apps themselves are scaffolded and developed in later phases (empty skeletons would rot unused while versions move on).
 - Checklist builder UI, recurrence engine, payments, push — per the deliberate non-features list in `AGENTS.md`.
 - Production VPS provisioning (compose prod profile is written; actually deploying is a separate task).
 
@@ -36,13 +36,17 @@ Stand up the entire backend needed for the slice-1 demo: monorepo foundation, fu
 2. **`CLAUDE.md`** at the repo root — a thin pointer: read `AGENTS.md` fully before any change; `docs/` is the source of truth.
 3. **Git initialization** — `git init`, branch `main`, first commit is the existing documentation; conventional commits from then on (the rules in §1 apply from the first commit).
 
-## Repository structure (backend-only phase)
+## Repository structure
+
+The root carries the full target monorepo layout from the README from day one — backend, frontend, deploy, docs. Frontend apps exist as reserved placeholders (a README stating "created in the frontend phase") rather than scaffolded Next.js/Expo projects, so the structure is fixed without dead dependencies aging in unused apps.
 
 ```
 sdano/
   CLAUDE.md
   AGENTS.md
   11-development-rules.md
+  apps/admin/              # placeholder: Next.js admin panel (frontend phase)
+  apps/mobile/             # placeholder: Expo worker app (frontend phase)
   apps/api/
     cmd/api/main.go          # wires everything; single deployable binary
     cmd/ops/main.go          # sdano-ops CLI (reuses internal packages)
@@ -130,7 +134,7 @@ request → request-id + slog context
 
 ## Implementation phases (walking skeleton → vertical slices)
 
-1. **Repo & rules**: git init (+ docs commit), agent-docs updates (version policy, `CLAUDE.md`), Nx workspace skeleton.
+1. **Repo & rules**: git init (+ docs commit), agent-docs updates (version policy, `CLAUDE.md`), Nx workspace skeleton with the full root layout (including `apps/admin` and `apps/mobile` placeholders).
 2. **Skeleton proven**: migration 0001 (full schema), sqlc setup, `GET /healthz` (DB + S3 checks) + one domain read through huma → OpenAPI 3.1 → Scalar `/docs` → orval → `packages/api-client`; compose dev profile; CI (golangci-lint zero-warnings, tests, sqlc drift check, orval drift check, govulncheck).
 3. **Auth**: staff login/refresh/logout, worker claim, middleware chain (rate limit, principal, tenant gate).
 4. **Worker vertical**: `/worker/today` → execution upsert (+ idempotency property tests) → photo presign/confirm → QR resolve.
