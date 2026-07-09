@@ -202,6 +202,8 @@ func registerExecutions(api huma.API, pool *pgxpool.Pool) {
 			return nil, problem(http.StatusForbidden, "work-order-not-assigned", "this work order is not assigned to you")
 		} else if errors.Is(err, ErrExecutionIDConflict) {
 			return nil, problem(http.StatusConflict, "execution-id-conflict", "this execution id is already in use")
+		} else if errors.Is(err, ErrInvalidChecklistItem) {
+			return nil, problem(http.StatusUnprocessableEntity, "invalid-checklist-item", "an item does not belong to this order's checklist version")
 		} else if err != nil {
 			return nil, err
 		}

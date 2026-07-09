@@ -132,9 +132,13 @@ func TestPhotoPresignThenConfirm(t *testing.T) {
 	if err := pool.QueryRow(context.Background(), `SELECT uploaded_at FROM photo WHERE id=$1`, photoID).Scan(&uploaded); err != nil || uploaded == nil {
 		t.Fatalf("uploaded_at not stamped: %v %v", uploaded, err)
 	}
-	// Re-presign an unconfirmed-or-confirmed photo is idempotent (same key, 200).
-	if p2 := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, presignBody); p2.Code != http.StatusOK {
-		t.Errorf("re-presign: got %d", p2.Code)
+	// Re-presigning an already-CONFIRMED photo must be rejected: the uploaded
+	// evidence bytes must not be replaceable. (Re-presigning an UNCONFIRMED
+	// photo — uploaded_at still null — remains allowed as the resumability
+	// path for a client retrying an interrupted upload before confirm.)
+	p2 := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, presignBody)
+	if p2.Code != http.StatusConflict || !strings.Contains(p2.Body.String(), "photo-already-uploaded") {
+		t.Errorf("re-presign of confirmed photo: got %d body %s; want 409 photo-already-uploaded", p2.Code, p2.Body)
 	}
 }
 
@@ -246,5 +250,24 @@ func TestPhotoConfirmIsEvidenceImmutable(t *testing.T) {
 	}
 	if lat == nil || *lat != 55.75 || lon == nil || *lon != 37.61 {
 		t.Fatalf("lat/lon overwritten by second confirm: lat=%v lon=%v; want unchanged 55.75/37.61", lat, lon)
+	}
+}
+
+// TestPhotoPresignRejectsNonJpeg proves that presign only accepts
+// image/jpeg: the S3 key is always suffixed .jpg and the mobile client only
+// ever sends JPEG, so any other content type is rejected up front rather
+// than silently presigning a URL for a mismatched extension.
+func TestPhotoPresignRejectsNonJpeg(t *testing.T) {
+	pool := testdb.New(t)
+	tenant, worker, exec := seedExecution(t, pool)
+	store := &fakeStore{exists: map[string]bool{}}
+	api := buildPhotoAPI(t, pool, store)
+	bearer := workerBearer(t, tenant, worker)
+	photoID := uuid.New()
+
+	presignBody := map[string]any{"id": photoID.String(), "execution_id": exec.String(), "kind": "after", "content_type": "text/html"}
+	p := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, presignBody)
+	if p.Code != http.StatusUnprocessableEntity || !strings.Contains(p.Body.String(), "unsupported-content-type") {
+		t.Fatalf("non-jpeg presign: got %d body %s; want 422 unsupported-content-type", p.Code, p.Body)
 	}
 }

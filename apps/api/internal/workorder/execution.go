@@ -28,6 +28,14 @@ var ErrWorkOrderNotAssigned = errors.New("work order not assigned to this worker
 // another tenant's execution items (which are not themselves tenant-scoped).
 var ErrExecutionIDConflict = errors.New("execution id already in use by another tenant or worker")
 
+// ErrInvalidChecklistItem is returned when a submitted execution item's
+// template_item_id does not belong to the work order's pinned checklist
+// version. work_execution_item.template_item_id references
+// checklist_template_item globally (no per-tenant or per-version FK scoping
+// — see db/migrations), so without this check a worker could bind an item
+// from another tenant's (or another version's) checklist template.
+var ErrInvalidChecklistItem = errors.New("checklist item does not belong to the order's version")
+
 type ExecutionItemInput struct {
 	ID             uuid.UUID
 	TemplateItemID uuid.UUID
@@ -113,6 +121,25 @@ func UpsertExecution(ctx context.Context, pool *pgxpool.Pool, tenantID, workerID
 	}
 	if owner.WorkOrderID != in.WorkOrderID {
 		return ErrExecutionIDConflict
+	}
+
+	// Every submitted item must reference a template item that belongs to
+	// this order's pinned checklist version. template_item_id is a global FK
+	// with no per-tenant/per-version scoping, so without this check a worker
+	// could bind another tenant's (or another version's) template item into
+	// their own execution.
+	valid, err := qtx.ListChecklistItemsByVersions(ctx, []uuid.UUID{wo.VersionID})
+	if err != nil {
+		return fmt.Errorf("loading checklist items: %w", err)
+	}
+	allowed := make(map[uuid.UUID]bool, len(valid))
+	for _, ci := range valid {
+		allowed[ci.ID] = true
+	}
+	for _, it := range in.Items {
+		if !allowed[it.TemplateItemID] {
+			return ErrInvalidChecklistItem
+		}
 	}
 
 	keep := make([]uuid.UUID, 0, len(in.Items))

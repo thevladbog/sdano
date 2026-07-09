@@ -250,3 +250,27 @@ func TestExecutionUpsertRejectsWorkOrderRepointing(t *testing.T) {
 		t.Errorf("order2 status = %q, want scheduled (must not be flipped by the rejected request)", status)
 	}
 }
+
+// TestExecutionUpsertRejectsForeignTemplateItem proves that an execution item
+// whose template_item_id does not belong to the work order's pinned checklist
+// version is rejected. work_execution_item.template_item_id is a global FK
+// with no per-tenant/per-version scoping, so without this check a worker
+// could bind another tenant's (or another version's) template item into
+// their own execution.
+func TestExecutionUpsertRejectsForeignTemplateItem(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	f := seedExecutionFixture(t, pool, uuid.New())
+	execID := uuid.New()
+
+	foreignTemplateItem := uuid.New() // not part of f.order's checklist version
+	err := workorder.UpsertExecution(ctx, pool, f.tenant, f.worker, execID, workorder.ExecutionInput{
+		WorkOrderID: f.order,
+		Items: []workorder.ExecutionItemInput{
+			{ID: uuid.New(), TemplateItemID: foreignTemplateItem, Checked: true},
+		},
+	})
+	if !errors.Is(err, workorder.ErrInvalidChecklistItem) {
+		t.Fatalf("foreign template item must be rejected: got %v", err)
+	}
+}

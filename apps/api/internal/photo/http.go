@@ -78,6 +78,9 @@ func registerPresign(api huma.API, q *db.Queries, store ObjectStore) {
 		if err != nil {
 			return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid execution_id")
 		}
+		if in.Body.ContentType != "image/jpeg" {
+			return nil, problem(http.StatusUnprocessableEntity, "unsupported-content-type", "only image/jpeg is supported")
+		}
 		ex, err := q.GetExecutionForWorker(ctx, db.GetExecutionForWorkerParams{ID: execID, TenantID: p.TenantID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, problem(http.StatusNotFound, "execution-not-found", "execution not found")
@@ -117,6 +120,15 @@ func registerPresign(api huma.API, q *db.Queries, store ObjectStore) {
 		}
 		if !got.ExecutionID.Valid || got.ExecutionID.UUID != execID {
 			return nil, problem(http.StatusConflict, "photo-id-conflict", "photo id already in use")
+		}
+		// Evidence immutability: once a photo has been confirmed (uploaded_at
+		// stamped), the uploaded bytes must not be replaceable via a fresh
+		// presigned URL. A re-presign of an UNCONFIRMED photo (uploaded_at
+		// still null) is still allowed and intentional — that's the
+		// resumability path for a client retrying an interrupted upload
+		// before confirm.
+		if got.UploadedAt.Valid {
+			return nil, problem(http.StatusConflict, "photo-already-uploaded", "photo already confirmed; cannot re-presign")
 		}
 		url, expires, err := store.PresignPut(ctx, key, in.Body.ContentType)
 		if err != nil {
