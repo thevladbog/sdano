@@ -11,6 +11,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"sdano.app/api/internal/config"
 )
@@ -23,6 +24,7 @@ type HealthCheck struct {
 
 // Deps carries everything app.New wires into handlers. Grows with the app.
 type Deps struct {
+	Pool   *pgxpool.Pool
 	Checks []HealthCheck
 }
 

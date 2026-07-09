@@ -52,16 +52,33 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	router, _ := app.New(cfg, app.Deps{})
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	pool, err := app.NewPool(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	s3c, err := app.NewS3(cfg)
+	if err != nil {
+		return fmt.Errorf("building s3 client: %w", err)
+	}
+
+	router, _ := app.New(cfg, app.Deps{
+		Pool: pool,
+		Checks: []app.HealthCheck{
+			app.DBCheck(pool),
+			app.S3Check(s3c, cfg.S3Bucket),
+		},
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
