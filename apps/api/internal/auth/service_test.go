@@ -3,7 +3,9 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -160,5 +162,154 @@ func TestClaimWorkerRejectsExpiredInvite(t *testing.T) {
 	svc := auth.NewService(pool, testSecret)
 	if _, err := svc.ClaimWorker(ctx, "654321"); !errors.Is(err, auth.ErrInvalidInvite) {
 		t.Errorf("expired invite must be ErrInvalidInvite, got %v", err)
+	}
+}
+
+// A deactivated worker's still-valid invite must be rejected up front: the
+// resulting device token could never authenticate (GetDeviceSession filters
+// is_active), so claiming must fail with invite-code-invalid, not a confusing
+// success. GetActiveInvite carries the is_active gate.
+func TestClaimWorkerRejectsDeactivatedWorker(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant := uuid.New()
+	worker := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant (id, name) VALUES ($1, 'Acme')`, tenant); err != nil {
+		t.Fatalf("tenant: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO app_user (id, tenant_id, role, display_name, is_active)
+		 VALUES ($1, $2, 'worker', 'Deactivated', false)`, worker, tenant); err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO worker_invite (tenant_id, user_id, code, expires_at)
+		 VALUES ($1, $2, '222333', now() + interval '1 hour')`, tenant, worker); err != nil {
+		t.Fatalf("invite: %v", err)
+	}
+	svc := auth.NewService(pool, testSecret)
+	if _, err := svc.ClaimWorker(ctx, "222333"); !errors.Is(err, auth.ErrInvalidInvite) {
+		t.Errorf("deactivated worker's invite must be ErrInvalidInvite, got %v", err)
+	}
+}
+
+// A login's response latency must not reveal whether an active credentialed
+// account exists at an email: every path — hit or miss — pays exactly one
+// argon2id verification. We measure the miss paths (unknown email, inactive
+// user) against a real account's wrong-password path (which runs argon2id once)
+// and require each to spend at least half as long; a short-circuit spends ~0.
+func TestLoginMissPathsRunPasswordVerification(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, _ := seedStaff(t, pool, "active@acme.test", "correctpassword1")
+
+	// A deactivated account with a real password hash — the inactive miss path.
+	inactiveHash, err := auth.HashPassword("inactivepassword1")
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO app_user (tenant_id, role, display_name, email, password_hash, is_active)
+		 VALUES ($1, 'admin', 'Gone', 'inactive@acme.test', $2, false)`, tenant, inactiveHash); err != nil {
+		t.Fatalf("inactive user: %v", err)
+	}
+	svc := auth.NewService(pool, testSecret)
+
+	median := func(email, password string) time.Duration {
+		const n = 5
+		ds := make([]time.Duration, n)
+		for i := range ds {
+			start := time.Now()
+			_, _ = svc.Login(ctx, email, password)
+			ds[i] = time.Since(start)
+		}
+		sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
+		return ds[n/2]
+	}
+
+	// Warm up: the first argon2id run allocates its 64 MiB buffer and primes any
+	// one-time dummy-hash computation — keep that out of the medians.
+	_, _ = svc.Login(ctx, "warmup@acme.test", "whatever")
+
+	baseline := median("active@acme.test", "wrongpassword") // hit, wrong password → argon2id once
+	unknown := median("nobody@acme.test", "whatever")        // unknown email → must still run argon2id
+	inactive := median("inactive@acme.test", "inactivepassword1")
+
+	if unknown < baseline/2 {
+		t.Errorf("unknown-email login (%v) short-circuits vs baseline (%v): timing side-channel", unknown, baseline)
+	}
+	if inactive < baseline/2 {
+		t.Errorf("inactive-user login (%v) short-circuits vs baseline (%v): timing side-channel", inactive, baseline)
+	}
+}
+
+// Archived tenants are dead — the token-minting auth endpoints must not hand out
+// tokens for them (docs/12: archived → 401 everywhere). Suspended tenants keep
+// read-only access and must still authenticate, so only archived is blocked.
+
+func TestLoginRejectsArchivedTenant(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, _ := seedStaff(t, pool, "boss@archived.test", "goodpassword12")
+	if _, err := pool.Exec(ctx, `UPDATE tenant SET status = 'archived' WHERE id = $1`, tenant); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	svc := auth.NewService(pool, testSecret)
+	if _, err := svc.Login(ctx, "boss@archived.test", "goodpassword12"); !errors.Is(err, auth.ErrTenantArchived) {
+		t.Errorf("login for archived tenant must be ErrTenantArchived, got %v", err)
+	}
+}
+
+func TestLoginAllowsSuspendedTenant(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, _ := seedStaff(t, pool, "boss@suspended.test", "goodpassword12")
+	if _, err := pool.Exec(ctx, `UPDATE tenant SET status = 'suspended' WHERE id = $1`, tenant); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+	svc := auth.NewService(pool, testSecret)
+	if _, err := svc.Login(ctx, "boss@suspended.test", "goodpassword12"); err != nil {
+		t.Errorf("login for suspended tenant must succeed (read-only access), got %v", err)
+	}
+}
+
+func TestRefreshRejectsArchivedTenant(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, _ := seedStaff(t, pool, "boss@arch-refresh.test", "goodpassword12")
+	svc := auth.NewService(pool, testSecret)
+	res, err := svc.Login(ctx, "boss@arch-refresh.test", "goodpassword12")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE tenant SET status = 'archived' WHERE id = $1`, tenant); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if _, err := svc.Refresh(ctx, res.RefreshToken); !errors.Is(err, auth.ErrTenantArchived) {
+		t.Errorf("refresh for archived tenant must be ErrTenantArchived, got %v", err)
+	}
+}
+
+func TestClaimWorkerRejectsArchivedTenant(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant := uuid.New()
+	worker := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant (id, name, status) VALUES ($1, 'Acme', 'archived')`, tenant); err != nil {
+		t.Fatalf("tenant: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO app_user (id, tenant_id, role, display_name) VALUES ($1, $2, 'worker', 'Alexey')`,
+		worker, tenant); err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO worker_invite (tenant_id, user_id, code, expires_at)
+		 VALUES ($1, $2, '909090', now() + interval '1 hour')`, tenant, worker); err != nil {
+		t.Fatalf("invite: %v", err)
+	}
+	svc := auth.NewService(pool, testSecret)
+	if _, err := svc.ClaimWorker(ctx, "909090"); !errors.Is(err, auth.ErrTenantArchived) {
+		t.Errorf("claim for archived tenant must be ErrTenantArchived, got %v", err)
 	}
 }

@@ -19,6 +19,9 @@ func RegisterAuthRoutes(api huma.API, svc *Service) {
 		if errors.Is(err, ErrInvalidCredentials) {
 			return nil, problem(http.StatusUnauthorized, "invalid-credentials", "email or password is incorrect")
 		}
+		if errors.Is(err, ErrTenantArchived) {
+			return nil, problem(http.StatusUnauthorized, "tenant-archived", "tenant has been archived")
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -36,6 +39,9 @@ func RegisterAuthRoutes(api huma.API, svc *Service) {
 		pair, err := svc.Refresh(ctx, in.Body.RefreshToken)
 		if errors.Is(err, ErrInvalidRefresh) {
 			return nil, problem(http.StatusUnauthorized, "invalid-refresh-token", "refresh token is invalid or expired")
+		}
+		if errors.Is(err, ErrTenantArchived) {
+			return nil, problem(http.StatusUnauthorized, "tenant-archived", "tenant has been archived")
 		}
 		if err != nil {
 			return nil, err
@@ -64,6 +70,9 @@ func RegisterAuthRoutes(api huma.API, svc *Service) {
 		res, err := svc.ClaimWorker(ctx, in.Body.InviteCode)
 		if errors.Is(err, ErrInvalidInvite) {
 			return nil, problem(http.StatusUnauthorized, "invite-code-invalid", "invite code is invalid or already used")
+		}
+		if errors.Is(err, ErrTenantArchived) {
+			return nil, problem(http.StatusUnauthorized, "tenant-archived", "tenant has been archived")
 		}
 		if err != nil {
 			return nil, err

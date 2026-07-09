@@ -18,6 +18,7 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrInvalidRefresh     = errors.New("invalid refresh token")
 	ErrInvalidInvite      = errors.New("invalid invite code")
+	ErrTenantArchived     = errors.New("tenant archived")
 )
 
 // dummyPasswordHash is a valid argon2id hash that Login verifies the supplied
@@ -86,6 +87,10 @@ func (s *Service) Login(ctx context.Context, email, password string) (LoginResul
 	if !eligible || !ok {
 		return LoginResult{}, ErrInvalidCredentials
 	}
+	// Credentials are valid; an archived tenant still gets no token (docs/12).
+	if err := s.assertTenantNotArchived(ctx, u.TenantID); err != nil {
+		return LoginResult{}, err
+	}
 	p := Principal{UserID: u.ID, TenantID: u.TenantID, Role: Role(u.Role)}
 	access, err := IssueAccessToken(s.secret, p, AccessTTL)
 	if err != nil {
@@ -112,6 +117,10 @@ func (s *Service) Refresh(ctx context.Context, refreshPlaintext string) (TokenPa
 	}
 	if r.RevokedAt.Valid || !r.IsActive || r.ExpiresAt.Time.Before(time.Now()) {
 		return TokenPair{}, ErrInvalidRefresh
+	}
+	// Do not rotate tokens for an archived tenant (docs/12).
+	if err := s.assertTenantNotArchived(ctx, r.TenantID); err != nil {
+		return TokenPair{}, err
 	}
 	if r.UsedAt.Valid {
 		// Reuse of a spent token → theft. Revoke the user's whole chain.
@@ -188,6 +197,10 @@ func (s *Service) ClaimWorker(ctx context.Context, code string) (ClaimResult, er
 	if err != nil {
 		return ClaimResult{}, fmt.Errorf("looking up invite: %w", err)
 	}
+	// Do not mint a device token for an archived tenant (docs/12).
+	if err := s.assertTenantNotArchived(ctx, inv.TenantID); err != nil {
+		return ClaimResult{}, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return ClaimResult{}, fmt.Errorf("begin tx: %w", err)
@@ -215,6 +228,21 @@ func (s *Service) ClaimWorker(ctx context.Context, code string) (ClaimResult, er
 		return ClaimResult{}, fmt.Errorf("commit: %w", err)
 	}
 	return ClaimResult{DeviceToken: plain, Worker: WorkerInfo{ID: inv.UserID, DisplayName: inv.DisplayName}}, nil
+}
+
+// assertTenantNotArchived rejects token issuance for archived tenants: they are
+// permanently dead (docs/12 — archived → 401 everywhere), so no auth endpoint
+// mints tokens for them. Trial/active/suspended tenants pass; the tenant-status
+// middleware handles per-request gating (e.g. suspended = read-only).
+func (s *Service) assertTenantNotArchived(ctx context.Context, tenantID uuid.UUID) error {
+	status, err := s.q.GetTenantStatus(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("looking up tenant status: %w", err)
+	}
+	if status == db.TenantStatusArchived {
+		return ErrTenantArchived
+	}
+	return nil
 }
 
 func (s *Service) issueRefresh(ctx context.Context, tenant, user uuid.UUID) (string, error) {
