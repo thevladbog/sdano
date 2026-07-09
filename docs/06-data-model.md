@@ -67,6 +67,17 @@ CREATE TABLE device_token (                     -- long-lived worker sessions
     revoked_at    timestamptz
 );
 
+CREATE TABLE refresh_token (                    -- staff sessions (rotated)
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id     uuid NOT NULL REFERENCES tenant(id),
+    user_id       uuid NOT NULL REFERENCES app_user(id),
+    token_hash    text NOT NULL UNIQUE,          -- sha256; opaque 256-bit token, 30-day TTL
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    expires_at    timestamptz NOT NULL,
+    used_at       timestamptz,                   -- rotation: reuse of a used token revokes the chain
+    revoked_at    timestamptz
+);
+
 -- === Objects ==============================================================
 
 CREATE TABLE object (
@@ -208,6 +219,8 @@ CREATE TABLE report (
     contract_id   uuid REFERENCES contract(id),
     period_from   date NOT NULL,
     period_to     date NOT NULL,
+    status        report_status NOT NULL DEFAULT 'generating',  -- 'generating' | 'ready' | 'failed'
+    failure_reason text,
     s3_key        text,                          -- the generated PDF
     generated_at  timestamptz,
     generated_by  uuid REFERENCES app_user(id)
@@ -237,6 +250,8 @@ CREATE INDEX ON object (tenant_id) WHERE is_active;
 7. **`missed` as a work_order status** rather than a computed value: a nightly job marks overdue scheduled orders. Reports need "missed" to be a fact with a timestamp, not a runtime opinion.
 8. **Tenant lifecycle in the schema from day one.** Status (trial/active/suspended/archived) affects application behavior everywhere, so it lives in the schema even though billing itself is manual. Semantics and the evidence-is-never-hostage rule: see 12-platform-ops.md. Enforcement: one middleware, not per-handler checks.
 9. **Recurrence deferred.** Slice 1 pre-generates work orders (manually or via a trivial generator). A proper schedule table (RRULE-like) is added when a real client describes their actual planning rhythm — guessing it now would bake in the wrong model.
+10. **Report rows double as the render queue** (`status` on `report`, one in-process renderer goroutine). Changed on 2026-07-09: added with the backend walking-skeleton design, see `docs/superpowers/specs/2026-07-09-backend-slice-0-1-design.md`.
+11. **Staff refresh tokens in `refresh_token`** — opaque, hashed, rotated on every use; reuse of a spent token revokes the user's whole chain. Added 2026-07-09 (same design doc).
 
 ## Open questions (to resolve with the first client)
 
