@@ -68,3 +68,41 @@ func TestLoadParsesPathStyleBool(t *testing.T) {
 		t.Error("S3_USE_PATH_STYLE=true must parse to true")
 	}
 }
+
+func TestLoadDefaultsTrustedProxyCountToZero(t *testing.T) {
+	cfg, err := Load(fakeEnv(validEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TrustedProxyCount != 0 {
+		t.Errorf("TrustedProxyCount default = %d, want 0", cfg.TrustedProxyCount)
+	}
+}
+
+func TestLoadParsesTrustedProxyCount(t *testing.T) {
+	env := validEnv()
+	env["TRUSTED_PROXY_COUNT"] = "1"
+	cfg, err := Load(fakeEnv(env))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TrustedProxyCount != 1 {
+		t.Errorf("TrustedProxyCount = %d, want 1", cfg.TrustedProxyCount)
+	}
+}
+
+func TestLoadRejectsNegativeTrustedProxyCount(t *testing.T) {
+	env := validEnv()
+	env["TRUSTED_PROXY_COUNT"] = "-1"
+	if _, err := Load(fakeEnv(env)); err == nil {
+		t.Fatal("Load must reject a negative TRUSTED_PROXY_COUNT")
+	}
+}
+
+func TestLoadRejectsNonNumericTrustedProxyCount(t *testing.T) {
+	env := validEnv()
+	env["TRUSTED_PROXY_COUNT"] = "notanumber"
+	if _, err := Load(fakeEnv(env)); err == nil {
+		t.Fatal("Load must reject a non-numeric TRUSTED_PROXY_COUNT")
+	}
+}
