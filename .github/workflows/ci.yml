@@ -1,7 +1,7 @@
 name: ci
 
-# Version policy: action majors (checkout@v5, setup-go@v5, setup-node@v4,
-# golangci-lint-action@v8) are the latest known-good as of plan writing —
+# Version policy: action majors (checkout@v7, setup-go@v6, setup-node@v6,
+# golangci-lint-action@v9) are the latest known-good as of 2026-07 —
 # bump to the current majors when touching this file if newer exist.
 
 permissions:
@@ -19,13 +19,13 @@ jobs:
       run:
         working-directory: apps/api
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26.5"
           cache-dependency-path: apps/api/go.sum
       - name: Lint (zero warnings policy)
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           working-directory: apps/api
@@ -39,12 +39,12 @@ jobs:
   codegen-drift:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26.5"
           cache-dependency-path: apps/api/go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: npm
@@ -68,6 +68,6 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Build API image
         run: docker build -f deploy/Dockerfile.api .
