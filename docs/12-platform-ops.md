@@ -35,6 +35,8 @@ Status semantics — **enforced in one middleware, not scattered across handlers
 
 Nuance worth the emphasis: a worker's outbox may contain legitimately performed work at the moment of suspension (offline shift). The API accepts outbox flushes for executions whose `device_finished_at` precedes the suspension timestamp — evidence of performed work is never rejected on billing grounds.
 
+**Auth endpoints and archived tenants:** the `/auth/*` routes are public, so the status middleware above never runs on them. Login, refresh, and worker-claim therefore enforce `archived` directly in the auth service and return `401 tenant-archived` rather than minting tokens for a dead tenant. `suspended`/`trial`/`active` tenants still authenticate normally; their per-request access is gated by the middleware (a suspended tenant is read-only, not locked out). A deactivated worker likewise cannot claim an invite — the resulting device token could never authenticate — so the claim fails with `invite-code-invalid`.
+
 ## Operator CLI (`sdano-ops`)
 
 A small Go binary in the same repo (`cmd/ops/`), run via SSH on the VPS (or locally against prod DSN through an SSH tunnel). No network surface of its own = no attack surface. Commands, Phase A set:

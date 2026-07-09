@@ -22,12 +22,17 @@ POST /auth/refresh            { refresh_token }    → { access_token, refresh_t
 POST /auth/logout             { refresh_token }    → 204
 ```
 Access token: 15 min JWT. Refresh: opaque, rotated on every use, stored hashed.
+Login and refresh reject an **archived** tenant with `401 tenant-archived` — a dead
+tenant is never issued tokens (see 12-platform-ops.md); a **suspended** tenant still
+authenticates (read-only staff access). Login runs a constant-time argon2id
+verification on every credential miss (unknown email, inactive user), so response
+latency never reveals whether an account exists at an email.
 
 ### Worker (device)
 ```
 POST /auth/worker/claim       { invite_code, device_name? } → { device_token, worker }
 ```
-Single-use code within its TTL; issues a long-lived device token (opaque, hashed at rest). Revocation happens server-side by deactivating the worker or the token — the next API call returns 401 and the app drops to the sign-in screen.
+Single-use code within its TTL; issues a long-lived device token (opaque, hashed at rest). Revocation happens server-side by deactivating the worker or the token — the next API call returns 401 and the app drops to the sign-in screen. A **deactivated** worker's invite is rejected up front as `invite-code-invalid` (the device token could never authenticate); claiming under an **archived** tenant returns `401 tenant-archived`.
 
 ## Worker-facing API (mobile)
 
@@ -155,7 +160,7 @@ The `execution_id` on a resolution is the loop link: "fixed during the planned v
 
 ## Cross-cutting
 
-- **Tenant status enforcement (one middleware, not per-handler checks).** The authenticated principal's tenant status gates requests per the table in 12-platform-ops.md: `trial`/`active` — full access; `suspended` — reads and exports allowed, mutations rejected with problem type `tenant-suspended` (403), **except** outbox flushes of work performed before suspension (`device_finished_at` < suspension timestamp) — evidence of performed work is never rejected on billing grounds; `archived` — 401. Report generation for past periods remains available under `suspended`.
+- **Tenant status enforcement (one middleware, not per-handler checks).** The authenticated principal's tenant status gates requests per the table in 12-platform-ops.md: `trial`/`active` — full access; `suspended` — reads and exports allowed, mutations rejected with problem type `tenant-suspended` (403), **except** outbox flushes of work performed before suspension (`device_finished_at` < suspension timestamp) — evidence of performed work is never rejected on billing grounds; `archived` — 401. Report generation for past periods remains available under `suspended`. The public `/auth/*` token-minting routes sit outside this middleware, so login, refresh, and worker-claim enforce `archived` in the auth service itself: an archived tenant gets `401 tenant-archived` instead of tokens (`suspended`/`trial`/`active` authenticate and are then gated per-request here).
 - **Rate limiting:** per-token, generous for workers (photo bursts are legitimate), stricter for auth endpoints.
 - **Versioning:** `/v1` in the path; additive changes preferred; breaking changes = new version (unlikely before the OSS pivot).
 - **Clock skew:** the server never rejects device timestamps for being "in the past"; it stores both device and server times (see data model, `device_finished_at`).

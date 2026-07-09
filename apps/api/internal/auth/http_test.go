@@ -197,6 +197,22 @@ func TestWorkerClaimEndpoint(t *testing.T) {
 	}
 }
 
+func TestLoginArchivedTenantEndpoint(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant := seedAdminForHTTP(t, pool, "boss@arch-http.test", "password12345")
+	if _, err := pool.Exec(ctx, `UPDATE tenant SET status = 'archived' WHERE id = $1`, tenant); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	_, post := newTestApp(pool)
+
+	// Correct credentials but a dead tenant → 401 with the stable slug, proven
+	// end-to-end through HTTP.
+	if rec := post("/api/v1/auth/login", `{"email":"boss@arch-http.test","password":"password12345"}`); rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "tenant-archived") {
+		t.Fatalf("archived login: got %d body %s", rec.Code, rec.Body)
+	}
+}
+
 // extractJSONString pulls a top-level string field out of a small JSON object
 // without a struct — enough for this test.
 func extractJSONString(t *testing.T, body, key string) string {
