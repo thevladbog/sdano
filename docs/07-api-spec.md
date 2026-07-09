@@ -68,12 +68,12 @@ PUT /worker/executions/{id}
 {
   "work_order_id": "...",
   "started_at": "...",            // device clock
-  "finished_at": "...",           // device clock; null while in progress
+  "device_finished_at": "...",    // device clock at completion; null while in progress
   "items": [ { "id", "template_item_id", "checked", "checked_at" } ],
   "note": null
 }
 ```
-Full-state upsert: the client always sends the complete current state of the execution; the server replaces. This makes the offline queue trivial — no diffs, no ordering hazards between item-level updates. Response: 200 with the server view (including any photos it knows about).
+Full-state upsert: the client always sends the complete current state of the execution; the server replaces. This makes the offline queue trivial — no diffs, no ordering hazards between item-level updates. Response: 200 with the server view (including any photos it knows about). The server stamps `finished_at` (server receipt time) once when `device_finished_at` first appears; both are kept (docs/06 decision 2).
 
 ### Photos — two-phase upload
 ```
