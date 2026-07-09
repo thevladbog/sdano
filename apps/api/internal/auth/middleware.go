@@ -140,7 +140,7 @@ func problem(status int, slug, detail string) *huma.ErrorModel {
 
 // writeProblem writes an RFC 7807 body from middleware (which cannot return an error).
 func writeProblem(ctx huma.Context, status int, slug, detail string) {
-	ctx.SetStatus(status)
 	ctx.SetHeader("Content-Type", "application/problem+json")
+	ctx.SetStatus(status)
 	_ = json.NewEncoder(ctx.BodyWriter()).Encode(problem(status, slug, detail))
 }

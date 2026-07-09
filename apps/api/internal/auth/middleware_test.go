@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -65,6 +66,13 @@ func TestAuthenticateRejectsMissingAndBadToken(t *testing.T) {
 	api, _ := buildAPI(t)
 	if resp := api.Get("/api/v1/staff/thing"); resp.Code != http.StatusUnauthorized {
 		t.Errorf("no token: got %d, want 401", resp.Code)
+	} else {
+		if ct := resp.Header().Get("Content-Type"); ct != "application/problem+json" {
+			t.Errorf("error Content-Type = %q, want application/problem+json", ct)
+		}
+		if !strings.Contains(resp.Body.String(), "authentication-required") {
+			t.Errorf("error body must carry the stable slug; body: %s", resp.Body)
+		}
 	}
 	if resp := api.Get("/api/v1/staff/thing", "Authorization: Bearer garbage"); resp.Code != http.StatusUnauthorized {
 		t.Errorf("garbage token: got %d, want 401", resp.Code)
