@@ -39,6 +39,9 @@ type RateLimiter struct {
 
 	mu      sync.Mutex
 	buckets map[string]*bucket
+	// maxBuckets caps the tracked-bucket count; once reached, new keys fail open
+	// instead of growing the map. Overridable in tests.
+	maxBuckets int
 	// now is the clock, overridable in tests for deterministic eviction.
 	now       func() time.Time
 	lastSweep time.Time
@@ -62,10 +65,13 @@ const (
 	// minute), so evicting an idle bucket never discards live throttle state —
 	// an idle bucket would have refilled to full anyway.
 	idleBucketTTL = 15 * time.Minute
-	// sweepInterval bounds how often we scan the map for idle buckets.
+	// sweepInterval bounds how often we scan the map for idle buckets, so the
+	// O(n) scan cost is capped regardless of request rate.
 	sweepInterval = 5 * time.Minute
-	// maxBuckets forces an out-of-schedule sweep if cardinality spikes.
-	maxBuckets = 100_000
+	// defaultMaxBuckets caps the tracked-bucket count. Once reached, new keys
+	// fail open (see allow) rather than grow the map without bound — a DoS
+	// backstop far above realistic cardinality at this scale.
+	defaultMaxBuckets = 100_000
 
 	healthzPath = "/healthz"
 	authPrefix  = "/api/v1/auth/"
@@ -74,12 +80,13 @@ const (
 // NewRateLimiter builds a limiter from per-minute request budgets.
 func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
 	return &RateLimiter{
-		auth:      newLimit(cfg.AuthPerMin),
-		healthz:   newLimit(cfg.HealthzPerMin),
-		ipCeiling: newLimit(cfg.IPCeilingPerMin),
-		principal: newLimit(cfg.PrincipalPerMin),
-		buckets:   make(map[string]*bucket),
-		now:       time.Now,
+		auth:       newLimit(cfg.AuthPerMin),
+		healthz:    newLimit(cfg.HealthzPerMin),
+		ipCeiling:  newLimit(cfg.IPCeilingPerMin),
+		principal:  newLimit(cfg.PrincipalPerMin),
+		buckets:    make(map[string]*bucket),
+		maxBuckets: defaultMaxBuckets,
+		now:        time.Now,
 	}
 }
 
@@ -142,6 +149,14 @@ func (rl *RateLimiter) allow(key string, l limit) bool {
 	b, ok := rl.buckets[key]
 	if !ok {
 		rl.sweep(now)
+		if len(rl.buckets) >= rl.maxBuckets {
+			// Hard cap: the map is full of buckets sweep could not reclaim (all
+			// still active). Fail open for this new key rather than grow without
+			// bound — every bucket already tracked stays enforced. Only reachable
+			// under an extreme distinct-key flood, where admitting untracked new
+			// keys is safer than unbounded memory.
+			return true
+		}
 		b = &bucket{lim: rate.NewLimiter(l.rate, l.burst)}
 		rl.buckets[key] = b
 	}
@@ -149,11 +164,12 @@ func (rl *RateLimiter) allow(key string, l limit) bool {
 	return b.lim.Allow()
 }
 
-// sweep evicts idle buckets. It runs on bucket creation but only does work once
-// per sweepInterval or when the map exceeds maxBuckets, so the common path stays
-// cheap. The caller holds rl.mu.
+// sweep evicts idle buckets. It runs on bucket creation but does real work at
+// most once per sweepInterval, so the O(n) scan cost stays bounded regardless of
+// request rate; growth between sweeps is capped by allow's maxBuckets fail-open.
+// The caller holds rl.mu.
 func (rl *RateLimiter) sweep(now time.Time) {
-	if len(rl.buckets) < maxBuckets && now.Sub(rl.lastSweep) < sweepInterval {
+	if now.Sub(rl.lastSweep) < sweepInterval {
 		return
 	}
 	for k, b := range rl.buckets {

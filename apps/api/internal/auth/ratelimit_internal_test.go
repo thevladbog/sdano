@@ -87,3 +87,33 @@ func TestSweepEvictsIdleButKeepsRecentBuckets(t *testing.T) {
 		t.Error("newly-created bucket 3.3.3.3 should be present")
 	}
 }
+
+// TestAllowFailsOpenAtMaxBuckets verifies the hard cap: once the bucket map is
+// full of active buckets that sweep cannot reclaim, a new key is admitted (fails
+// open) without growing the map past the cap.
+func TestAllowFailsOpenAtMaxBuckets(t *testing.T) {
+	rl := NewRateLimiter(RateLimitConfig{AuthPerMin: 1, HealthzPerMin: 1, IPCeilingPerMin: 1, PrincipalPerMin: 1})
+	base := time.Unix(1_000_000, 0)
+	rl.now = func() time.Time { return base }
+	rl.maxBuckets = 2
+
+	// Fill to capacity with two distinct, active keys.
+	rl.allow("g:1.1.1.1", rl.ipCeiling)
+	rl.allow("g:2.2.2.2", rl.ipCeiling)
+
+	// A third distinct key at capacity must fail open (be admitted) and must not
+	// be tracked, so the map never grows past the cap.
+	if !rl.allow("g:3.3.3.3", rl.ipCeiling) {
+		t.Error("new key at max capacity must fail open (be admitted)")
+	}
+	rl.mu.Lock()
+	n := len(rl.buckets)
+	_, has3 := rl.buckets["g:3.3.3.3"]
+	rl.mu.Unlock()
+	if n > 2 {
+		t.Errorf("bucket map grew past cap: len=%d, want <= 2", n)
+	}
+	if has3 {
+		t.Error("failed-open key must not be tracked in the bucket map")
+	}
+}
