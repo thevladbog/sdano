@@ -4,6 +4,9 @@ name: ci
 # golangci-lint-action@v8) are the latest known-good as of plan writing —
 # bump to the current majors when touching this file if newer exist.
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -59,6 +62,8 @@ jobs:
           make openapi
           npm run generate -w packages/api-client
           git diff --exit-code
+      - name: Typecheck generated client
+        run: npm run typecheck -w packages/api-client
 
   docker:
     runs-on: ubuntu-latest

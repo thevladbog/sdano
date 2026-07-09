@@ -14,6 +14,7 @@ MIGRATE := docker run --rm -v $(MIGRATIONS):/migrations --network sdano_default 
 dev-up:
 	$(COMPOSE) --profile dev up -d --wait postgres minio headless-shell
 	$(COMPOSE) --profile dev up -d minio-setup
+	$(COMPOSE) --profile dev up -d api
 
 dev-down:
 	$(COMPOSE) --profile dev down
