@@ -68,6 +68,7 @@ func run(logger *slog.Logger) error {
 
 	router, _ := app.New(cfg, app.Deps{
 		Pool: pool,
+		S3:   s3c,
 		Checks: []app.HealthCheck{
 			app.DBCheck(pool),
 			app.S3Check(s3c, cfg.S3Bucket),

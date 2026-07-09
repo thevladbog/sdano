@@ -65,6 +65,14 @@ export interface ClaimOutputBody {
   worker: WorkerView;
 }
 
+export interface ConfirmInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  lat?: number;
+  lon?: number;
+  taken_at?: string;
+}
+
 export interface ErrorDetail {
   /** Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
   location?: string;
@@ -211,6 +219,44 @@ export interface LogoutInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   refresh_token: string;
+}
+
+export interface PhotoView {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  id: string;
+  kind: string;
+  lat?: number;
+  lon?: number;
+  taken_at?: string;
+  uploaded_at?: string;
+}
+
+export type PresignInputBodyKind = typeof PresignInputBodyKind[keyof typeof PresignInputBodyKind];
+
+
+export const PresignInputBodyKind = {
+  before: 'before',
+  after: 'after',
+  defect: 'defect',
+  resolution: 'resolution',
+} as const;
+
+export interface PresignInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  content_type: string;
+  execution_id: string;
+  id: string;
+  kind: PresignInputBodyKind;
+}
+
+export interface PresignOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expires_at: string;
+  s3_key: string;
+  upload_url: string;
 }
 
 export interface RefreshInputBody {
@@ -561,6 +607,107 @@ export const upsertWorkerExecution = async (id: string,
 
   const data: upsertWorkerExecutionResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as upsertWorkerExecutionResponse
+}
+
+
+
+export type presignWorkerPhotoResponse200 = {
+  data: PresignOutputBody
+  status: 200
+}
+
+export type presignWorkerPhotoResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type presignWorkerPhotoResponseSuccess = (presignWorkerPhotoResponse200) & {
+  headers: Headers;
+};
+export type presignWorkerPhotoResponseError = (presignWorkerPhotoResponseDefault) & {
+  headers: Headers;
+};
+
+export type presignWorkerPhotoResponse = (presignWorkerPhotoResponseSuccess | presignWorkerPhotoResponseError)
+
+export const getPresignWorkerPhotoUrl = () => {
+
+
+
+
+  return `/api/v1/worker/photos/presign`
+}
+
+/**
+ * @summary Presign a direct-to-S3 photo upload
+ */
+export const presignWorkerPhoto = async (presignInputBody: NonReadonly<PresignInputBody>, options?: RequestInit): Promise<presignWorkerPhotoResponse> => {
+
+  const res = await fetch(getPresignWorkerPhotoUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(presignInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: presignWorkerPhotoResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as presignWorkerPhotoResponse
+}
+
+
+
+export type confirmWorkerPhotoResponse200 = {
+  data: PhotoView
+  status: 200
+}
+
+export type confirmWorkerPhotoResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type confirmWorkerPhotoResponseSuccess = (confirmWorkerPhotoResponse200) & {
+  headers: Headers;
+};
+export type confirmWorkerPhotoResponseError = (confirmWorkerPhotoResponseDefault) & {
+  headers: Headers;
+};
+
+export type confirmWorkerPhotoResponse = (confirmWorkerPhotoResponseSuccess | confirmWorkerPhotoResponseError)
+
+export const getConfirmWorkerPhotoUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/worker/photos/${id}/confirm`
+}
+
+/**
+ * @summary Confirm a photo uploaded to S3
+ */
+export const confirmWorkerPhoto = async (id: string,
+    confirmInputBody: NonReadonly<ConfirmInputBody>, options?: RequestInit): Promise<confirmWorkerPhotoResponse> => {
+
+  const res = await fetch(getConfirmWorkerPhotoUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(confirmInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: confirmWorkerPhotoResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as confirmWorkerPhotoResponse
 }
 
 
