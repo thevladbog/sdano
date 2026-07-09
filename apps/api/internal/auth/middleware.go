@@ -86,10 +86,10 @@ func (a *Authenticator) Authorize(ctx huma.Context, next func(huma.Context)) {
 		return
 	}
 	switch status {
-	case db.TenantStatus("archived"):
+	case db.TenantStatusArchived:
 		writeProblem(ctx, http.StatusUnauthorized, "tenant-archived", "tenant archived")
 		return
-	case db.TenantStatus("suspended"):
+	case db.TenantStatusSuspended:
 		if isMutation(ctx) && !suspendedWritable(ctx.Operation()) {
 			writeProblem(ctx, http.StatusForbidden, "tenant-suspended", "tenant suspended; read-only access")
 			return

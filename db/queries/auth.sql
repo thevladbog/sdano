@@ -19,7 +19,7 @@ WHERE r.token_hash = $1;
 
 -- name: MarkRefreshTokenUsed :one
 UPDATE refresh_token SET used_at = now()
-WHERE id = $1 AND used_at IS NULL
+WHERE id = $1 AND used_at IS NULL AND revoked_at IS NULL
 RETURNING id;
 
 -- name: RevokeUserRefreshTokens :exec
