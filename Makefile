@@ -6,7 +6,7 @@ COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
 MIGRATIONS := $(CURDIR)/db/migrations
 # Runs on the compose network so `postgres` resolves on macOS and Linux alike.
 MIGRATE := docker run --rm -v $(MIGRATIONS):/migrations --network sdano_default \
-  migrate/migrate:v4 -path=/migrations \
+  migrate/migrate:v4.19.1 -path=/migrations \
   -database "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)?sslmode=disable"
 
 .PHONY: dev-up dev-down migrate-up migrate-down migrate-drop generate-sqlc openapi generate-client generate lint test drift
