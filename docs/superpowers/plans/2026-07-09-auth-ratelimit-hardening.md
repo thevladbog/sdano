@@ -572,7 +572,7 @@ Then replace the limiter construction and middleware-install lines:
 	rl := auth.NewRateLimiter(auth.RateLimitConfig{
 		AuthPerMin:      10,   // /api/v1/auth/* per client IP
 		HealthzPerMin:   60,   // /healthz per client IP (isolated)
-		IPCeilingPerMin: 1200, // pre-auth DoS ceiling on all other routes, per client IP
+		IPCeilingPerMin: 3000, // pre-auth DoS ceiling on all other routes, per client IP (~10x the per-principal budget for CGNAT fairness)
 		PrincipalPerMin: 300,  // authenticated ops, per verified principal
 	})
 	api.UseMiddleware(rl.LimitByIP, authn.Authenticate, rl.LimitByPrincipal, authn.Authorize)

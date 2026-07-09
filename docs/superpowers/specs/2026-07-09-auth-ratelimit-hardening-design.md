@@ -61,7 +61,7 @@ rl.LimitByIP → authn.Authenticate → rl.LimitByPrincipal → authn.Authorize
 |---------|------------------------------|------------|----------------|
 | health  | `== "/healthz"`              | `h:<ip>`   | 60 / min       |
 | auth    | `HasPrefix "/api/v1/auth/"`  | `a:<ip>`   | 10 / min       |
-| general | everything else (DoS backstop)| `g:<ip>`  | 1200 / min     |
+| general | everything else (DoS backstop)| `g:<ip>`  | 3000 / min     |
 
 Tier 1 is the entire fix for problem 2's bypass: **there is no token keying pre-auth**. Rotating garbage tokens from one IP all share that IP's `g:` bucket and are 429'd *before* reaching `Authenticate`'s `GetDeviceSession` query. It also gives `/healthz` its own isolated class (problem 1's sub-issue), so an uptime monitor and an auth flood cannot starve each other.
 
@@ -102,7 +102,7 @@ func NewRateLimiter(cfg RateLimitConfig) *RateLimiter
 `app.New` call site:
 ```go
 rl := auth.NewRateLimiter(auth.RateLimitConfig{
-    AuthPerMin: 10, HealthzPerMin: 60, IPCeilingPerMin: 1200, PrincipalPerMin: 300,
+    AuthPerMin: 10, HealthzPerMin: 60, IPCeilingPerMin: 3000, PrincipalPerMin: 300,
 })
 ```
 Budgets are tunable, not contract (per the auth spec). Single limiter struct, two exported middleware methods (`LimitByIP`, `LimitByPrincipal`).
@@ -110,8 +110,8 @@ Budgets are tunable, not contract (per the auth spec). Single limiter struct, tw
 ## Data flow
 
 - **Public `/api/v1/auth/login` behind Caddy:** chi middleware sets client IP from XFF → `LimitByIP` keys `a:<realIP>` at 10/min → `Authenticate` skips (public) → `LimitByPrincipal` skips (public) → handler.
-- **Authenticated worker `PUT /worker/executions/{id}` behind CGNAT:** `LimitByIP` keys `g:<sharedNATip>` at 1200/min (coarse ceiling) → `Authenticate` verifies device token, sets principal → `LimitByPrincipal` keys `p:<tenant>:<user>` at 300/min (the binding, fair limit) → `Authorize` → handler.
-- **Attacker rotating garbage tokens from one IP:** `LimitByIP` keys `g:<ip>`; after 1200/min they get 429 **before** `Authenticate`'s DB query. No per-token buckets are ever created.
+- **Authenticated worker `PUT /worker/executions/{id}` behind CGNAT:** `LimitByIP` keys `g:<sharedNATip>` at 3000/min (coarse ceiling) → `Authenticate` verifies device token, sets principal → `LimitByPrincipal` keys `p:<tenant>:<user>` at 300/min (the binding, fair limit) → `Authorize` → handler.
+- **Attacker rotating garbage tokens from one IP:** `LimitByIP` keys `g:<ip>`; after 3000/min they get 429 **before** `Authenticate`'s DB query. No per-token buckets are ever created.
 - **Uptime monitor:** `LimitByIP` keys `h:<monitorIP>` at 60/min, isolated from auth and general classes.
 
 ## Testing
