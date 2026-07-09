@@ -29,7 +29,7 @@ const getActiveInvite = `-- name: GetActiveInvite :one
 SELECT i.id, i.tenant_id, i.user_id, u.display_name
 FROM worker_invite i
 JOIN app_user u ON u.id = i.user_id
-WHERE i.code = $1 AND i.used_at IS NULL AND i.expires_at > now()
+WHERE i.code = $1 AND i.used_at IS NULL AND i.expires_at > now() AND u.is_active
 `
 
 type GetActiveInviteRow struct {
@@ -185,6 +185,19 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 		arg.TokenHash,
 		arg.ExpiresAt,
 	)
+	return err
+}
+
+const lockUser = `-- name: LockUser :exec
+SELECT id FROM app_user WHERE id = $1 FOR UPDATE
+`
+
+// Per-user serialization point for refresh-token rotation vs reuse-triggered
+// revocation. Both hold this row lock for the whole transaction so a revocation
+// can never run concurrently with (and miss under READ COMMITTED) an in-flight
+// rotation's newly inserted refresh row.
+func (q *Queries) LockUser(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockUser, id)
 	return err
 }
 
