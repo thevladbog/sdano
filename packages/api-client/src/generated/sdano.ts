@@ -5,6 +5,53 @@
  * Photo-evidence and reporting platform for field service contractors.
  * OpenAPI spec version: 0.1.0
  */
+
+// https://stackoverflow.com/questions/49579094/typescript-conditional-types-filter-out-readonly-properties-pick-only-requir/49579497#49579497
+type IfEquals<X, Y, A = X, B = never> = (<T>() => T extends X ? 1 : 2) extends <
+T,
+>() => T extends Y ? 1 : 2
+? A
+: B;
+
+type WritableKeys<T> = {
+[P in keyof T]-?: IfEquals<
+  { [Q in P]: T[P] },
+  { -readonly [Q in P]: T[P] },
+  P
+>;
+}[keyof T];
+
+type UnionToIntersection<U> =
+  (U extends any ? (k: U)=>void : never) extends ((k: infer I)=>void) ? I : never;
+type DistributeReadOnlyOverUnions<T> = T extends any ? NonReadonly<T> : never;
+
+type Writable<T> = Pick<T, WritableKeys<T>>;
+type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
+  [P in keyof Writable<T>]: T[P] extends object
+    ? NonReadonly<NonNullable<T[P]>>
+    : T[P];
+} : DistributeReadOnlyOverUnions<T>;
+
+export interface ClaimInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  device_name?: string;
+  /** @minLength 1 */
+  invite_code: string;
+}
+
+export interface WorkerView {
+  display_name: string;
+  id: string;
+}
+
+export interface ClaimOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  device_token: string;
+  worker: WorkerView;
+}
+
 export interface ErrorDetail {
   /** Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
   location?: string;
@@ -65,12 +112,255 @@ export interface ListOutputBody {
   objects: Object[] | null;
 }
 
+export interface LoginInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  email: string;
+  /** @minLength 1 */
+  password: string;
+}
+
+export interface UserView {
+  display_name: string;
+  /** @nullable */
+  email: string | null;
+  id: string;
+  role: string;
+}
+
+export interface LoginOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  access_token: string;
+  refresh_token: string;
+  user: UserView;
+}
+
+export interface LogoutInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  refresh_token: string;
+}
+
+export interface RefreshInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  refresh_token: string;
+}
+
+export interface TokenPairOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  access_token: string;
+  refresh_token: string;
+}
+
 export type HTTPStatusCode1xx = 100 | 101 | 102 | 103;
 export type HTTPStatusCode2xx = 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207;
 export type HTTPStatusCode3xx = 300 | 301 | 302 | 303 | 304 | 305 | 307 | 308;
 export type HTTPStatusCode4xx = 400 | 401 | 402 | 403 | 404 | 405 | 406 | 407 | 408 | 409 | 410 | 411 | 412 | 413 | 414 | 415 | 416 | 417 | 418 | 419 | 420 | 421 | 422 | 423 | 424 | 426 | 428 | 429 | 431 | 451;
 export type HTTPStatusCode5xx = 500 | 501 | 502 | 503 | 504 | 505 | 507 | 511;
 export type HTTPStatusCodes = HTTPStatusCode1xx | HTTPStatusCode2xx | HTTPStatusCode3xx | HTTPStatusCode4xx | HTTPStatusCode5xx;
+
+export type authLoginResponse200 = {
+  data: LoginOutputBody
+  status: 200
+}
+
+export type authLoginResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type authLoginResponseSuccess = (authLoginResponse200) & {
+  headers: Headers;
+};
+export type authLoginResponseError = (authLoginResponseDefault) & {
+  headers: Headers;
+};
+
+export type authLoginResponse = (authLoginResponseSuccess | authLoginResponseError)
+
+export const getAuthLoginUrl = () => {
+
+
+
+
+  return `/api/v1/auth/login`
+}
+
+/**
+ * @summary Staff login
+ */
+export const authLogin = async (loginInputBody: NonReadonly<LoginInputBody>, options?: RequestInit): Promise<authLoginResponse> => {
+
+  const res = await fetch(getAuthLoginUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(loginInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: authLoginResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as authLoginResponse
+}
+
+
+
+export type authLogoutResponse204 = {
+  data: void
+  status: 204
+}
+
+export type authLogoutResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type authLogoutResponseSuccess = (authLogoutResponse204) & {
+  headers: Headers;
+};
+export type authLogoutResponseError = (authLogoutResponseDefault) & {
+  headers: Headers;
+};
+
+export type authLogoutResponse = (authLogoutResponseSuccess | authLogoutResponseError)
+
+export const getAuthLogoutUrl = () => {
+
+
+
+
+  return `/api/v1/auth/logout`
+}
+
+/**
+ * @summary Revoke a refresh token
+ */
+export const authLogout = async (logoutInputBody: NonReadonly<LogoutInputBody>, options?: RequestInit): Promise<authLogoutResponse> => {
+
+  const res = await fetch(getAuthLogoutUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(logoutInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: authLogoutResponse['data'] = body ? JSON.parse(body) : undefined
+  return { data, status: res.status, headers: res.headers } as authLogoutResponse
+}
+
+
+
+export type authRefreshResponse200 = {
+  data: TokenPairOutputBody
+  status: 200
+}
+
+export type authRefreshResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type authRefreshResponseSuccess = (authRefreshResponse200) & {
+  headers: Headers;
+};
+export type authRefreshResponseError = (authRefreshResponseDefault) & {
+  headers: Headers;
+};
+
+export type authRefreshResponse = (authRefreshResponseSuccess | authRefreshResponseError)
+
+export const getAuthRefreshUrl = () => {
+
+
+
+
+  return `/api/v1/auth/refresh`
+}
+
+/**
+ * @summary Rotate tokens
+ */
+export const authRefresh = async (refreshInputBody: NonReadonly<RefreshInputBody>, options?: RequestInit): Promise<authRefreshResponse> => {
+
+  const res = await fetch(getAuthRefreshUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(refreshInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: authRefreshResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as authRefreshResponse
+}
+
+
+
+export type authWorkerClaimResponse200 = {
+  data: ClaimOutputBody
+  status: 200
+}
+
+export type authWorkerClaimResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type authWorkerClaimResponseSuccess = (authWorkerClaimResponse200) & {
+  headers: Headers;
+};
+export type authWorkerClaimResponseError = (authWorkerClaimResponseDefault) & {
+  headers: Headers;
+};
+
+export type authWorkerClaimResponse = (authWorkerClaimResponseSuccess | authWorkerClaimResponseError)
+
+export const getAuthWorkerClaimUrl = () => {
+
+
+
+
+  return `/api/v1/auth/worker/claim`
+}
+
+/**
+ * @summary Claim a worker invite
+ */
+export const authWorkerClaim = async (claimInputBody: NonReadonly<ClaimInputBody>, options?: RequestInit): Promise<authWorkerClaimResponse> => {
+
+  const res = await fetch(getAuthWorkerClaimUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(claimInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: authWorkerClaimResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as authWorkerClaimResponse
+}
+
+
 
 export type listStaffObjectsResponse200 = {
   data: ListOutputBody

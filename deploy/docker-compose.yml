@@ -80,7 +80,7 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_USE_PATH_STYLE: ${S3_USE_PATH_STYLE}
       ADMIN_ORIGIN: ${ADMIN_ORIGIN}
-      DEV_TENANT_HEADER_AUTH: ${DEV_TENANT_HEADER_AUTH}
+      JWT_SECRET: ${JWT_SECRET}
     ports:
       - "8080:8080"
     depends_on:
