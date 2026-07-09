@@ -4,6 +4,7 @@ package workorder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -24,6 +25,7 @@ import (
 func Register(api huma.API, pool *pgxpool.Pool) {
 	q := db.New(pool)
 	registerToday(api, q)
+	registerExecutions(api, pool)
 }
 
 type todayObject struct {
@@ -131,5 +133,82 @@ func registerToday(api huma.API, q *db.Queries) {
 			})
 		}
 		return out, nil
+	})
+}
+
+func problem(status int, slug, detail string) *huma.ErrorModel {
+	return &huma.ErrorModel{Type: slug, Title: http.StatusText(status), Status: status, Detail: detail}
+}
+
+type executionItemBody struct {
+	ID             string     `json:"id" format:"uuid"`
+	TemplateItemID string     `json:"template_item_id" format:"uuid"`
+	Checked        bool       `json:"checked"`
+	CheckedAt      *time.Time `json:"checked_at,omitempty"`
+}
+
+type executionUpsertInput struct {
+	ID   string `path:"id"`
+	Body struct {
+		WorkOrderID      string              `json:"work_order_id" format:"uuid"`
+		StartedAt        *time.Time          `json:"started_at,omitempty"`
+		DeviceFinishedAt *time.Time          `json:"device_finished_at,omitempty"`
+		Note             *string             `json:"note,omitempty"`
+		Items            []executionItemBody `json:"items"`
+	}
+}
+
+type executionOutput struct {
+	Body ExecutionView
+}
+
+func registerExecutions(api huma.API, pool *pgxpool.Pool) {
+	huma.Register(api, huma.Operation{
+		OperationID: "upsertWorkerExecution",
+		Method:      http.MethodPut,
+		Path:        "/api/v1/worker/executions/{id}",
+		Summary:     "Idempotent full-state execution upsert",
+		Tags:        []string{"worker"},
+		Metadata:    auth.SuspendedWritable(),
+	}, func(ctx context.Context, in *executionUpsertInput) (*executionOutput, error) {
+		p, ok := auth.PrincipalFrom(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		execID, err := uuid.Parse(in.ID)
+		if err != nil {
+			return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid execution id")
+		}
+		woID, err := uuid.Parse(in.Body.WorkOrderID)
+		if err != nil {
+			return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid work_order_id")
+		}
+		items := make([]ExecutionItemInput, 0, len(in.Body.Items))
+		for _, it := range in.Body.Items {
+			iid, err := uuid.Parse(it.ID)
+			if err != nil {
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid item id")
+			}
+			tid, err := uuid.Parse(it.TemplateItemID)
+			if err != nil {
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid template_item_id")
+			}
+			items = append(items, ExecutionItemInput{ID: iid, TemplateItemID: tid, Checked: it.Checked, CheckedAt: it.CheckedAt})
+		}
+		if err := UpsertExecution(ctx, pool, p.TenantID, p.UserID, execID, ExecutionInput{
+			WorkOrderID: woID, StartedAt: in.Body.StartedAt, DeviceFinishedAt: in.Body.DeviceFinishedAt,
+			Note: in.Body.Note, Items: items,
+		}); errors.Is(err, ErrWorkOrderNotAssigned) {
+			return nil, problem(http.StatusForbidden, "work-order-not-assigned", "this work order is not assigned to you")
+		} else if errors.Is(err, ErrExecutionIDConflict) {
+			return nil, problem(http.StatusConflict, "execution-id-conflict", "this execution id is already in use")
+		} else if err != nil {
+			return nil, err
+		}
+		view, err := loadExecutionView(ctx, db.New(pool), p.TenantID, execID)
+		if err != nil {
+			return nil, err
+		}
+		return &executionOutput{Body: view}, nil
 	})
 }

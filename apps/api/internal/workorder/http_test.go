@@ -93,3 +93,42 @@ func TestWorkerTodayReturnsAssignedRoute(t *testing.T) {
 		t.Errorf("expected exactly 1 work order for this worker, saw %d; body: %s", n, body)
 	}
 }
+
+func TestExecutionUpsertHTTPRoundTrip(t *testing.T) {
+	pool := testdb.New(t)
+	worker := uuid.New()
+	f := seedExecutionFixture(t, pool, worker)
+	router, _ := app.New(config.Config{JWTSecret: testSecret}, app.Deps{Pool: pool})
+	execID := uuid.New()
+
+	body := `{"work_order_id":"` + f.order.String() + `","started_at":"2026-07-09T09:00:00Z","items":[{"id":"` + f.execItem1.String() + `","template_item_id":"` + f.tmplItem1.String() + `","checked":true}]}`
+	put := func(authz string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/worker/executions/"+execID.String(), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if authz != "" {
+			req.Header.Set("Authorization", authz)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	rec := put(workerBearer(t, f.tenant, worker))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upsert: got %d; body %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), f.execItem1.String()) {
+		t.Errorf("server view must echo the item; body %s", rec.Body)
+	}
+	// Replay is safe (idempotent) → still 200.
+	if rec2 := put(workerBearer(t, f.tenant, worker)); rec2.Code != http.StatusOK {
+		t.Errorf("replay: got %d", rec2.Code)
+	}
+	// A different worker in the same tenant is forbidden (order not theirs).
+	intruder := uuid.New()
+	if _, err := pool.Exec(context.Background(), `INSERT INTO app_user (id, tenant_id, role, display_name) VALUES ($1,$2,'worker','I')`, intruder, f.tenant); err != nil {
+		t.Fatalf("seed intruder: %v", err)
+	}
+	if rec3 := put(workerBearer(t, f.tenant, intruder)); rec3.Code != http.StatusForbidden {
+		t.Errorf("intruder: got %d, want 403; body %s", rec3.Code, rec3.Body)
+	}
+}

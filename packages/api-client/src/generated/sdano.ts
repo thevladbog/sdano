@@ -94,6 +94,64 @@ export interface ErrorModel {
   type?: string;
 }
 
+export interface ExecutionItemBody {
+  checked: boolean;
+  checked_at?: string;
+  id: string;
+  template_item_id: string;
+}
+
+export interface ExecutionItemView {
+  checked: boolean;
+  /** @nullable */
+  checked_at: string | null;
+  id: string;
+  template_item_id: string;
+}
+
+export interface ExecutionPhotoView {
+  id: string;
+  kind: string;
+  /** @nullable */
+  lat: number | null;
+  /** @nullable */
+  lon: number | null;
+  /** @nullable */
+  taken_at: string | null;
+  /** @nullable */
+  uploaded_at: string | null;
+}
+
+export interface ExecutionUpsertInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  device_finished_at?: string;
+  /** @nullable */
+  items: ExecutionItemBody[] | null;
+  note?: string;
+  started_at?: string;
+  work_order_id: string;
+}
+
+export interface ExecutionView {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  device_finished_at: string | null;
+  /** @nullable */
+  finished_at: string | null;
+  id: string;
+  /** @nullable */
+  items: ExecutionItemView[] | null;
+  /** @nullable */
+  note: string | null;
+  /** @nullable */
+  photos: ExecutionPhotoView[] | null;
+  /** @nullable */
+  started_at: string | null;
+  work_order_id: string;
+}
+
 export interface HealthOutputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -452,6 +510,57 @@ export const listStaffObjects = async ( options?: RequestInit): Promise<listStaf
 
   const data: listStaffObjectsResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as listStaffObjectsResponse
+}
+
+
+
+export type upsertWorkerExecutionResponse200 = {
+  data: ExecutionView
+  status: 200
+}
+
+export type upsertWorkerExecutionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type upsertWorkerExecutionResponseSuccess = (upsertWorkerExecutionResponse200) & {
+  headers: Headers;
+};
+export type upsertWorkerExecutionResponseError = (upsertWorkerExecutionResponseDefault) & {
+  headers: Headers;
+};
+
+export type upsertWorkerExecutionResponse = (upsertWorkerExecutionResponseSuccess | upsertWorkerExecutionResponseError)
+
+export const getUpsertWorkerExecutionUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/worker/executions/${id}`
+}
+
+/**
+ * @summary Idempotent full-state execution upsert
+ */
+export const upsertWorkerExecution = async (id: string,
+    executionUpsertInputBody: NonReadonly<ExecutionUpsertInputBody>, options?: RequestInit): Promise<upsertWorkerExecutionResponse> => {
+
+  const res = await fetch(getUpsertWorkerExecutionUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(executionUpsertInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: upsertWorkerExecutionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as upsertWorkerExecutionResponse
 }
 
 
