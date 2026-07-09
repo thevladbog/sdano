@@ -15,9 +15,9 @@ import (
 const confirmPhoto = `-- name: ConfirmPhoto :exec
 UPDATE photo
 SET uploaded_at = COALESCE(uploaded_at, now()),
-    taken_at    = $3,
-    lat         = $4,
-    lon         = $5
+    taken_at    = COALESCE(taken_at, $3),
+    lat         = COALESCE(lat, $4),
+    lon         = COALESCE(lon, $5)
 WHERE id = $1 AND tenant_id = $2
 `
 
@@ -29,8 +29,8 @@ type ConfirmPhotoParams struct {
 	Lon      *float64
 }
 
-// uploaded_at stamped once (COALESCE); taken_at/lat/lon are device values,
-// deterministic across replays.
+// uploaded_at, taken_at, lat, lon are all stamped once (COALESCE): evidence
+// is immutable, so a re-confirm replay cannot overwrite already-set values.
 func (q *Queries) ConfirmPhoto(ctx context.Context, arg ConfirmPhotoParams) error {
 	_, err := q.db.Exec(ctx, confirmPhoto,
 		arg.ID,

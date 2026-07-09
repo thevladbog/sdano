@@ -179,3 +179,72 @@ func TestPhotoPresignRejectsIDReuseAcrossExecutions(t *testing.T) {
 		t.Fatalf("photo row execution_id = %s; want unchanged exec1 %s", gotExec, exec1)
 	}
 }
+
+// TestPhotoConfirmRejectsNonOwningWorker proves that confirm — like presign —
+// verifies the calling worker owns the photo's execution. GetPhoto is only
+// tenant-scoped, so without this check any worker in the tenant could confirm
+// (and thus stamp taken_at/lat/lon evidence for) another worker's photo.
+func TestPhotoConfirmRejectsNonOwningWorker(t *testing.T) {
+	pool := testdb.New(t)
+	tenant, workerA, exec := seedExecution(t, pool)
+	workerB := uuid.New()
+	if _, err := pool.Exec(context.Background(), `INSERT INTO app_user (id,tenant_id,role,display_name) VALUES ($1,$2,'worker','B')`, workerB, tenant); err != nil {
+		t.Fatalf("seed workerB: %v", err)
+	}
+	store := &fakeStore{exists: map[string]bool{}}
+	api := buildPhotoAPI(t, pool, store)
+	bearerA := workerBearer(t, tenant, workerA)
+	bearerB := workerBearer(t, tenant, workerB)
+	photoID := uuid.New()
+
+	presignBody := map[string]any{"id": photoID.String(), "execution_id": exec.String(), "kind": "after", "content_type": "image/jpeg"}
+	if p := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearerA, presignBody); p.Code != http.StatusOK {
+		t.Fatalf("presign: got %d; body %s", p.Code, p.Body)
+	}
+	wantKey := "tenants/" + tenant.String() + "/photos/" + photoID.String() + ".jpg"
+	store.exists[wantKey] = true
+
+	confirmBody := map[string]any{"taken_at": "2026-07-09T09:00:00Z", "lat": 55.75, "lon": 37.61}
+	c := api.Post("/api/v1/worker/photos/"+photoID.String()+"/confirm", "Authorization: "+bearerB, confirmBody)
+	if c.Code != http.StatusForbidden || !strings.Contains(c.Body.String(), "work-order-not-assigned") {
+		t.Fatalf("confirm by non-owning worker: got %d body %s; want 403 work-order-not-assigned", c.Code, c.Body)
+	}
+}
+
+// TestPhotoConfirmIsEvidenceImmutable proves a re-confirm cannot overwrite
+// already-stamped taken_at/lat/lon: ConfirmPhoto uses COALESCE so the first
+// non-null value sticks, matching uploaded_at's existing once-only semantics.
+func TestPhotoConfirmIsEvidenceImmutable(t *testing.T) {
+	pool := testdb.New(t)
+	tenant, worker, exec := seedExecution(t, pool)
+	store := &fakeStore{exists: map[string]bool{}}
+	api := buildPhotoAPI(t, pool, store)
+	bearer := workerBearer(t, tenant, worker)
+	photoID := uuid.New()
+
+	presignBody := map[string]any{"id": photoID.String(), "execution_id": exec.String(), "kind": "after", "content_type": "image/jpeg"}
+	if p := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, presignBody); p.Code != http.StatusOK {
+		t.Fatalf("presign: got %d; body %s", p.Code, p.Body)
+	}
+	wantKey := "tenants/" + tenant.String() + "/photos/" + photoID.String() + ".jpg"
+	store.exists[wantKey] = true
+
+	first := map[string]any{"taken_at": "2026-07-09T09:00:00Z", "lat": 55.75, "lon": 37.61}
+	if c1 := api.Post("/api/v1/worker/photos/"+photoID.String()+"/confirm", "Authorization: "+bearer, first); c1.Code != http.StatusOK {
+		t.Fatalf("first confirm: got %d; body %s", c1.Code, c1.Body)
+	}
+
+	second := map[string]any{"taken_at": "2020-01-01T00:00:00Z", "lat": 0.0, "lon": 0.0}
+	c2 := api.Post("/api/v1/worker/photos/"+photoID.String()+"/confirm", "Authorization: "+bearer, second)
+	if c2.Code != http.StatusOK {
+		t.Fatalf("second confirm: got %d; body %s", c2.Code, c2.Body)
+	}
+
+	var lat, lon *float64
+	if err := pool.QueryRow(context.Background(), `SELECT lat, lon FROM photo WHERE id=$1`, photoID).Scan(&lat, &lon); err != nil {
+		t.Fatalf("reloading photo: %v", err)
+	}
+	if lat == nil || *lat != 55.75 || lon == nil || *lon != 37.61 {
+		t.Fatalf("lat/lon overwritten by second confirm: lat=%v lon=%v; want unchanged 55.75/37.61", lat, lon)
+	}
+}

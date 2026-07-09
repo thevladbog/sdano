@@ -176,6 +176,19 @@ func registerConfirm(api huma.API, q *db.Queries, store ObjectStore) {
 		if err != nil {
 			return nil, fmt.Errorf("loading photo: %w", err)
 		}
+		if !ph.ExecutionID.Valid {
+			return nil, problem(http.StatusNotFound, "execution-not-found", "photo has no execution")
+		}
+		ex, err := q.GetExecutionForWorker(ctx, db.GetExecutionForWorkerParams{ID: ph.ExecutionID.UUID, TenantID: p.TenantID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, problem(http.StatusNotFound, "execution-not-found", "execution not found")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("loading execution: %w", err)
+		}
+		if ex.WorkerID != p.UserID {
+			return nil, problem(http.StatusForbidden, "work-order-not-assigned", "photo belongs to another worker")
+		}
 		exists, err := store.Exists(ctx, ph.S3Key)
 		if err != nil {
 			return nil, fmt.Errorf("checking object: %w", err)

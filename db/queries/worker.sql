@@ -108,13 +108,13 @@ FROM photo
 WHERE id = $1 AND tenant_id = $2;
 
 -- name: ConfirmPhoto :exec
--- uploaded_at stamped once (COALESCE); taken_at/lat/lon are device values,
--- deterministic across replays.
+-- uploaded_at, taken_at, lat, lon are all stamped once (COALESCE): evidence
+-- is immutable, so a re-confirm replay cannot overwrite already-set values.
 UPDATE photo
 SET uploaded_at = COALESCE(uploaded_at, now()),
-    taken_at    = $3,
-    lat         = $4,
-    lon         = $5
+    taken_at    = COALESCE(taken_at, $3),
+    lat         = COALESCE(lat, $4),
+    lon         = COALESCE(lon, $5)
 WHERE id = $1 AND tenant_id = $2;
 
 -- === QR resolution =========================================================
