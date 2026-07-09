@@ -44,22 +44,25 @@ func VerifyPassword(password, encoded string) (bool, error) {
 		return false, errInvalidHash
 	}
 	var version int
-	if _, err := fmt.Sscanf(parts[2], "v=%d", &version); err != nil || version != argon2.Version {
-		return false, errInvalidHash
+	if _, err := fmt.Sscanf(parts[2], "v=%d", &version); err != nil {
+		return false, fmt.Errorf("%w: parsing version: %v", errInvalidHash, err)
+	}
+	if version != argon2.Version {
+		return false, fmt.Errorf("%w: unsupported version %d", errInvalidHash, version)
 	}
 	var mem, t uint32
 	var p uint8
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &mem, &t, &p); err != nil {
-		return false, errInvalidHash
+		return false, fmt.Errorf("%w: parsing params: %v", errInvalidHash, err)
 	}
 	b64 := base64.RawStdEncoding
 	salt, err := b64.DecodeString(parts[4])
 	if err != nil {
-		return false, errInvalidHash
+		return false, fmt.Errorf("%w: decoding salt: %v", errInvalidHash, err)
 	}
 	want, err := b64.DecodeString(parts[5])
 	if err != nil {
-		return false, errInvalidHash
+		return false, fmt.Errorf("%w: decoding hash: %v", errInvalidHash, err)
 	}
 	got := argon2.IDKey([]byte(password), salt, t, mem, p, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
