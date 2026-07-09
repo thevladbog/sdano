@@ -4,15 +4,18 @@
 SELECT wo.id, wo.object_id, wo.due_date, wo.status, wo.version_id,
        o.name AS object_name, o.address, o.lat, o.lon, o.qr_token
 FROM work_order wo
-JOIN object o ON o.id = wo.object_id
+JOIN object o ON o.id = wo.object_id AND o.tenant_id = wo.tenant_id
 WHERE wo.tenant_id = $1 AND wo.assignee_id = $2 AND wo.due_date = $3
 ORDER BY o.name;
 
 -- name: ListChecklistItemsByVersions :many
-SELECT version_id, id, position, title, requires_photo
-FROM checklist_template_item
-WHERE version_id = ANY(sqlc.arg(version_ids)::uuid[])
-ORDER BY version_id, position;
+SELECT i.version_id, i.id, i.position, i.title, i.requires_photo
+FROM checklist_template_item i
+JOIN checklist_template_version v ON v.id = i.version_id
+JOIN checklist_template t ON t.id = v.template_id
+WHERE i.version_id = ANY(sqlc.arg(version_ids)::uuid[])
+  AND t.tenant_id = sqlc.arg(tenant_id)
+ORDER BY i.version_id, i.position;
 
 -- === execution upsert ======================================================
 
@@ -36,22 +39,13 @@ INSERT INTO work_execution (
 )
 ON CONFLICT (id) DO UPDATE SET
     started_at         = EXCLUDED.started_at,
-    device_finished_at = EXCLUDED.device_finished_at,
-    -- finished_at = server time of the *most recent* completion (last-write-wins
-    -- domain semantics), not a first-completion-only stamp:
-    --   * reopen: a later snapshot with device_finished_at NULL resets
-    --     finished_at to NULL (the CASE's NULL branch).
-    --   * (re)complete: COALESCE stamps a fresh now() unless finished_at is
-    --     already set for *this* device_finished_at value, so replaying the
-    --     same completed snapshot is idempotent (stable finished_at).
-    --   * out-of-order delivery (a stale in-progress snapshot arriving after
-    --     a completed one) is bounded by the mobile outbox, which coalesces
-    --     to the latest snapshot per entity before sync — see docs/08. This
-    --     query does not itself guard against out-of-order replay.
-    finished_at        = CASE
-        WHEN EXCLUDED.device_finished_at IS NULL THEN NULL
-        ELSE COALESCE(work_execution.finished_at, now())
-    END,
+    -- Completion is evidence: once device_finished_at / finished_at are recorded
+    -- they are permanent. A later in-progress snapshot (a delayed/out-of-order
+    -- outbox retry) can never erase a recorded completion time. started_at / note
+    -- still follow the latest snapshot.
+    device_finished_at = COALESCE(work_execution.device_finished_at, EXCLUDED.device_finished_at),
+    finished_at        = COALESCE(work_execution.finished_at,
+                                  CASE WHEN EXCLUDED.device_finished_at IS NOT NULL THEN now() ELSE NULL END),
     note = EXCLUDED.note
 WHERE work_execution.tenant_id = EXCLUDED.tenant_id
   AND work_execution.worker_id = EXCLUDED.worker_id;
@@ -60,7 +54,7 @@ WHERE work_execution.tenant_id = EXCLUDED.tenant_id
 DELETE FROM work_execution_item
 WHERE execution_id = $1 AND id <> ALL(sqlc.arg(keep_ids)::uuid[]);
 
--- name: UpsertWorkExecutionItem :exec
+-- name: UpsertWorkExecutionItem :execrows
 INSERT INTO work_execution_item (id, execution_id, template_item_id, checked, checked_at)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (id) DO UPDATE SET

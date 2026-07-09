@@ -121,6 +121,14 @@ func registerPresign(api huma.API, q *db.Queries, store ObjectStore) {
 		if !got.ExecutionID.Valid || got.ExecutionID.UUID != execID {
 			return nil, problem(http.StatusConflict, "photo-id-conflict", "photo id already in use")
 		}
+		// Same guard, but for kind: InsertPhotoPresign's ON CONFLICT DO
+		// NOTHING also no-ops when the id collides on the SAME execution but
+		// with a DIFFERENT kind, so we would otherwise hand back a fresh
+		// presigned URL while the row silently kept its original kind,
+		// mislabeling the evidence that eventually lands at this id.
+		if string(got.Kind) != in.Body.Kind {
+			return nil, problem(http.StatusConflict, "photo-id-conflict", "photo id already in use with a different kind")
+		}
 		// Evidence immutability: once a photo has been confirmed (uploaded_at
 		// stamped), the uploaded bytes must not be replaceable via a fresh
 		// presigned URL. A re-presign of an UNCONFIRMED photo (uploaded_at

@@ -251,6 +251,118 @@ func TestExecutionUpsertRejectsWorkOrderRepointing(t *testing.T) {
 	}
 }
 
+// TestExecutionUpsertPreservesCompletionOnStaleRetry proves that a delayed/
+// out-of-order in-progress snapshot (an outbox retry that lost the race with
+// a later completed snapshot) cannot erase a recorded completion.
+// device_finished_at / finished_at are evidence: once stamped, only sticky
+// (COALESCE) semantics apply in UpsertWorkExecution, and work order status is
+// derived from the stored row, not the request, so the order cannot revert
+// from done back to in_progress either.
+func TestExecutionUpsertPreservesCompletionOnStaleRetry(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	f := seedExecutionFixture(t, pool, uuid.New())
+	execID := uuid.New()
+	start := time.Now().UTC().Add(-2 * time.Hour)
+	done := time.Now().UTC().Add(-time.Hour)
+
+	completed := workorder.ExecutionInput{
+		WorkOrderID: f.order, StartedAt: &start, DeviceFinishedAt: &done,
+		Items: []workorder.ExecutionItemInput{
+			{ID: f.execItem1, TemplateItemID: f.tmplItem1, Checked: true, CheckedAt: &done},
+		},
+	}
+	if err := workorder.UpsertExecution(ctx, pool, f.tenant, f.worker, execID, completed); err != nil {
+		t.Fatalf("apply completed snapshot: %v", err)
+	}
+
+	var storedDeviceFinished, storedFinished time.Time
+	if err := pool.QueryRow(ctx, `SELECT device_finished_at, finished_at FROM work_execution WHERE id=$1`, execID).Scan(&storedDeviceFinished, &storedFinished); err != nil {
+		t.Fatalf("read completion after completed snapshot: %v", err)
+	}
+
+	// A stale in-progress snapshot (device_finished_at nil), as if a delayed
+	// outbox retry from before completion arrived late.
+	inProgress := workorder.ExecutionInput{
+		WorkOrderID: f.order, StartedAt: &start,
+		Items: []workorder.ExecutionItemInput{
+			{ID: f.execItem1, TemplateItemID: f.tmplItem1, Checked: true, CheckedAt: &done},
+		},
+	}
+	if err := workorder.UpsertExecution(ctx, pool, f.tenant, f.worker, execID, inProgress); err != nil {
+		t.Fatalf("apply stale in-progress snapshot: %v", err)
+	}
+
+	var afterDeviceFinished, afterFinished time.Time
+	if err := pool.QueryRow(ctx, `SELECT device_finished_at, finished_at FROM work_execution WHERE id=$1`, execID).Scan(&afterDeviceFinished, &afterFinished); err != nil {
+		t.Fatalf("read completion after stale retry: %v", err)
+	}
+	if !storedDeviceFinished.Equal(afterDeviceFinished) {
+		t.Errorf("device_finished_at erased by stale retry: %v -> %v", storedDeviceFinished, afterDeviceFinished)
+	}
+	if !storedFinished.Equal(afterFinished) {
+		t.Errorf("finished_at erased by stale retry: %v -> %v", storedFinished, afterFinished)
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM work_order WHERE id=$1`, f.order).Scan(&status); err != nil {
+		t.Fatalf("read order status: %v", err)
+	}
+	if status != "done" {
+		t.Errorf("order status = %q, want done (must not revert on stale in-progress retry)", status)
+	}
+}
+
+// TestExecutionUpsertRejectsItemIDCollision proves that a submitted item id
+// belonging to a DIFFERENT execution is rejected loudly rather than silently
+// dropped. work_execution_item.id is a client-generated, globally-unique
+// primary key; UpsertWorkExecutionItem's ON CONFLICT ... WHERE guard yields
+// zero rows affected on a cross-execution collision, and the service must
+// surface that as ErrExecutionItemConflict.
+func TestExecutionUpsertRejectsItemIDCollision(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	worker := uuid.New()
+	f1 := seedExecutionFixture(t, pool, worker)
+
+	exec1 := uuid.New()
+	if err := workorder.UpsertExecution(ctx, pool, f1.tenant, f1.worker, exec1, workorder.ExecutionInput{
+		WorkOrderID: f1.order,
+		Items: []workorder.ExecutionItemInput{
+			{ID: f1.execItem1, TemplateItemID: f1.tmplItem1, Checked: true},
+		},
+	}); err != nil {
+		t.Fatalf("seed execution1: %v", err)
+	}
+
+	// A second work order for the same tenant/worker.
+	object2, tmpl2, version2, order2 := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	must := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	must(`INSERT INTO object (id, tenant_id, name) VALUES ($1,$2,'Obj2')`, object2, f1.tenant)
+	must(`INSERT INTO checklist_template (id, tenant_id, name) VALUES ($1,$2,'T2')`, tmpl2, f1.tenant)
+	must(`INSERT INTO checklist_template_version (id, template_id, version) VALUES ($1,$2,1)`, version2, tmpl2)
+	tmplItem2 := uuid.New()
+	must(`INSERT INTO checklist_template_item (id, version_id, position, title) VALUES ($1,$2,1,'i1')`, tmplItem2, version2)
+	must(`INSERT INTO work_order (id, tenant_id, object_id, version_id, assignee_id, due_date) VALUES ($1,$2,$3,$4,$5,current_date)`,
+		order2, f1.tenant, object2, version2, worker)
+
+	exec2 := uuid.New()
+	err := workorder.UpsertExecution(ctx, pool, f1.tenant, worker, exec2, workorder.ExecutionInput{
+		WorkOrderID: order2,
+		Items: []workorder.ExecutionItemInput{
+			{ID: f1.execItem1, TemplateItemID: tmplItem2, Checked: true}, // reuses exec1's item id
+		},
+	})
+	if !errors.Is(err, workorder.ErrExecutionItemConflict) {
+		t.Fatalf("cross-execution item id collision must be rejected: got %v", err)
+	}
+}
+
 // TestExecutionUpsertRejectsForeignTemplateItem proves that an execution item
 // whose template_item_id does not belong to the work order's pinned checklist
 // version is rejected. work_execution_item.template_item_id is a global FK

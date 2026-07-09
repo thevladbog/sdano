@@ -97,7 +97,10 @@ func registerToday(api huma.API, q *db.Queries) {
 		}
 		itemsByVersion := map[uuid.UUID][]checklistItem{}
 		if len(versionIDs) > 0 {
-			items, err := q.ListChecklistItemsByVersions(ctx, versionIDs)
+			items, err := q.ListChecklistItemsByVersions(ctx, db.ListChecklistItemsByVersionsParams{
+				VersionIds: versionIDs,
+				TenantID:   p.TenantID,
+			})
 			if err != nil {
 				return nil, fmt.Errorf("listing checklist items: %w", err)
 			}
@@ -204,6 +207,8 @@ func registerExecutions(api huma.API, pool *pgxpool.Pool) {
 			return nil, problem(http.StatusConflict, "execution-id-conflict", "this execution id is already in use")
 		} else if errors.Is(err, ErrInvalidChecklistItem) {
 			return nil, problem(http.StatusUnprocessableEntity, "invalid-checklist-item", "an item does not belong to this order's checklist version")
+		} else if errors.Is(err, ErrExecutionItemConflict) {
+			return nil, problem(http.StatusConflict, "execution-item-conflict", "an item id is already used by a different execution")
 		} else if err != nil {
 			return nil, err
 		}

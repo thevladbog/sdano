@@ -184,6 +184,40 @@ func TestPhotoPresignRejectsIDReuseAcrossExecutions(t *testing.T) {
 	}
 }
 
+// TestPhotoPresignRejectsKindReuse proves that a photo-id collision on the
+// SAME execution but with a DIFFERENT kind is rejected, not silently
+// accepted. InsertPhotoPresign's ON CONFLICT (id) DO NOTHING also no-ops in
+// this case, which — absent this check — would hand back a fresh presigned
+// URL while the row silently kept its original kind, mislabeling the
+// evidence that eventually lands at this id.
+func TestPhotoPresignRejectsKindReuse(t *testing.T) {
+	pool := testdb.New(t)
+	tenant, worker, exec := seedExecution(t, pool)
+	store := &fakeStore{exists: map[string]bool{}}
+	api := buildPhotoAPI(t, pool, store)
+	bearer := workerBearer(t, tenant, worker)
+	photoID := uuid.New()
+
+	before := map[string]any{"id": photoID.String(), "execution_id": exec.String(), "kind": "before", "content_type": "image/jpeg"}
+	if p1 := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, before); p1.Code != http.StatusOK {
+		t.Fatalf("first presign: got %d; body %s", p1.Code, p1.Body)
+	}
+
+	after := map[string]any{"id": photoID.String(), "execution_id": exec.String(), "kind": "after", "content_type": "image/jpeg"}
+	p2 := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, after)
+	if p2.Code != http.StatusConflict || !strings.Contains(p2.Body.String(), "photo-id-conflict") {
+		t.Fatalf("kind-reuse presign: got %d body %s; want 409 photo-id-conflict", p2.Code, p2.Body)
+	}
+
+	var gotKind string
+	if err := pool.QueryRow(context.Background(), `SELECT kind FROM photo WHERE id=$1`, photoID).Scan(&gotKind); err != nil {
+		t.Fatalf("reloading photo: %v", err)
+	}
+	if gotKind != "before" {
+		t.Fatalf("photo row kind = %q; want unchanged \"before\"", gotKind)
+	}
+}
+
 // TestPhotoConfirmRejectsNonOwningWorker proves that confirm — like presign —
 // verifies the calling worker owns the photo's execution. GetPhoto is only
 // tenant-scoped, so without this check any worker in the tenant could confirm

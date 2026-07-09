@@ -36,6 +36,14 @@ var ErrExecutionIDConflict = errors.New("execution id already in use by another 
 // from another tenant's (or another version's) checklist template.
 var ErrInvalidChecklistItem = errors.New("checklist item does not belong to the order's version")
 
+// ErrExecutionItemConflict is returned when a submitted execution item's id
+// already belongs to a DIFFERENT execution. work_execution_item.id is a
+// client-generated, globally-unique primary key (no per-execution namespace),
+// and UpsertWorkExecutionItem's ON CONFLICT ... WHERE guard silently no-ops
+// the write in that case rather than erroring — without this check the item
+// would simply go missing from the response instead of failing loudly.
+var ErrExecutionItemConflict = errors.New("execution item id belongs to a different execution")
+
 type ExecutionItemInput struct {
 	ID             uuid.UUID
 	TemplateItemID uuid.UUID
@@ -128,7 +136,10 @@ func UpsertExecution(ctx context.Context, pool *pgxpool.Pool, tenantID, workerID
 	// with no per-tenant/per-version scoping, so without this check a worker
 	// could bind another tenant's (or another version's) template item into
 	// their own execution.
-	valid, err := qtx.ListChecklistItemsByVersions(ctx, []uuid.UUID{wo.VersionID})
+	valid, err := qtx.ListChecklistItemsByVersions(ctx, db.ListChecklistItemsByVersionsParams{
+		VersionIds: []uuid.UUID{wo.VersionID},
+		TenantID:   tenantID,
+	})
 	if err != nil {
 		return fmt.Errorf("loading checklist items: %w", err)
 	}
@@ -150,21 +161,25 @@ func UpsertExecution(ctx context.Context, pool *pgxpool.Pool, tenantID, workerID
 		return fmt.Errorf("pruning items: %w", err)
 	}
 	for _, it := range in.Items {
-		if err := qtx.UpsertWorkExecutionItem(ctx, db.UpsertWorkExecutionItemParams{
+		n, err := qtx.UpsertWorkExecutionItem(ctx, db.UpsertWorkExecutionItemParams{
 			ID: it.ID, ExecutionID: executionID, TemplateItemID: it.TemplateItemID,
 			Checked: it.Checked, CheckedAt: ts(it.CheckedAt),
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("upsert item %s: %w", it.ID, err)
+		}
+		if n == 0 {
+			return ErrExecutionItemConflict
 		}
 	}
 
-	// status tracks device_finished_at, not finished_at: reopening (a later
-	// snapshot with device_finished_at nil) flips the order back to
-	// in_progress and resets finished_at server-side — see the finished_at
-	// CASE in UpsertWorkExecution (db/queries/worker.sql) for the full
-	// reset-on-reopen semantics.
+	// status tracks the STORED (post-upsert) completion, not the request's
+	// device_finished_at: completion is sticky evidence (see UpsertWorkExecution
+	// in db/queries/worker.sql), so a delayed/out-of-order in-progress snapshot
+	// that arrives after a completion was recorded must not revert a done order
+	// back to in_progress.
 	status := db.WorkOrderStatusInProgress
-	if in.DeviceFinishedAt != nil {
+	if owner.DeviceFinishedAt.Valid {
 		status = db.WorkOrderStatusDone
 	}
 	if err := qtx.SetWorkOrderStatus(ctx, db.SetWorkOrderStatusParams{ID: in.WorkOrderID, TenantID: tenantID, Status: status}); err != nil {
