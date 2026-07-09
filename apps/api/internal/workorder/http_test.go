@@ -57,6 +57,18 @@ func TestWorkerTodayReturnsAssignedRoute(t *testing.T) {
 	// A second order for another worker on the same day must NOT appear.
 	must(`INSERT INTO work_order (id, tenant_id, object_id, version_id, assignee_id, due_date) VALUES ($1,$2,$3,$4,$5,$6::date)`, uuid.New(), tenant, object, version, otherWorker, today)
 
+	// Cross-tenant isolation: prove another tenant's order does NOT appear.
+	otherTenant := uuid.New()
+	otherWorkerForOtherTenant := uuid.New()
+	otherObject := uuid.New()
+	otherTmpl, otherVersion, otherOrder := uuid.New(), uuid.New(), uuid.New()
+	must(`INSERT INTO tenant (id, name) VALUES ($1, 'OtherCo')`, otherTenant)
+	must(`INSERT INTO app_user (id, tenant_id, role, display_name) VALUES ($1,$2,'worker','Ivan')`, otherWorkerForOtherTenant, otherTenant)
+	must(`INSERT INTO object (id, tenant_id, name) VALUES ($1,$2,'OTHER-TENANT-OBJECT')`, otherObject, otherTenant)
+	must(`INSERT INTO checklist_template (id, tenant_id, name) VALUES ($1,$2,'OtherT')`, otherTmpl, otherTenant)
+	must(`INSERT INTO checklist_template_version (id, template_id, version) VALUES ($1,$2,1)`, otherVersion, otherTmpl)
+	must(`INSERT INTO work_order (id, tenant_id, object_id, version_id, assignee_id, due_date) VALUES ($1,$2,$3,$4,$5,$6::date)`, otherOrder, otherTenant, otherObject, otherVersion, otherWorkerForOtherTenant, today)
+
 	router, _ := app.New(config.Config{JWTSecret: testSecret}, app.Deps{Pool: pool})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/worker/today", nil)
@@ -71,6 +83,10 @@ func TestWorkerTodayReturnsAssignedRoute(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("today body missing %q; body: %s", want, body)
 		}
+	}
+	// Cross-tenant isolation: other tenant's object must not appear.
+	if strings.Contains(body, "OTHER-TENANT-OBJECT") {
+		t.Errorf("tenant isolation broken — another tenant's object leaked into /worker/today; body: %s", body)
 	}
 	// The other worker's route count: exactly one work_order for this worker.
 	if n := strings.Count(body, `"object_id"`); n != 1 {
