@@ -73,13 +73,15 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 </html>`))
 	})
 
-	api.UseMiddleware(auth.NewDevTenantHeader(api, cfg.DevTenantHeaderAuth))
+	queries := db.New(deps.Pool)
+	authn := auth.NewAuthenticator(cfg.JWTSecret, queries)
+	api.UseMiddleware(authn.Authenticate, authn.Authorize)
 
 	// Route registration only wires up schema + handler closures; it never
 	// touches deps.Pool until a request actually runs. Registering
 	// unconditionally means `go run ./cmd/api openapi` (which builds the app
 	// with a nil pool) still emits listStaffObjects in the spec.
-	object.Register(api, db.New(deps.Pool))
+	object.Register(api, queries)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "healthz",
@@ -87,6 +89,7 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 		Path:        "/healthz",
 		Summary:     "Service health",
 		Tags:        []string{"meta"},
+		Metadata:    auth.Public(),
 	}, func(ctx context.Context, _ *struct{}) (*healthOutput, error) {
 		for _, c := range deps.Checks {
 			if err := c.Ping(ctx); err != nil {

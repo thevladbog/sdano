@@ -10,9 +10,21 @@ import (
 	"github.com/google/uuid"
 
 	"sdano.app/api/internal/app"
+	"sdano.app/api/internal/auth"
 	"sdano.app/api/internal/config"
 	"sdano.app/api/internal/testdb"
 )
+
+const testSecret = "test-secret"
+
+func bearer(t *testing.T, tenant uuid.UUID, role auth.Role) string {
+	t.Helper()
+	tok, err := auth.IssueAccessToken(testSecret, auth.Principal{UserID: uuid.New(), TenantID: tenant, Role: role}, auth.AccessTTL)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	return "Bearer " + tok
+}
 
 func TestListObjectsIsTenantScoped(t *testing.T) {
 	pool := testdb.New(t)
@@ -24,8 +36,7 @@ func TestListObjectsIsTenantScoped(t *testing.T) {
 		name string
 	}{{&tenantA, "A"}, {&tenantB, "B"}} {
 		*row.id = uuid.New()
-		if _, err := pool.Exec(ctx,
-			`INSERT INTO tenant (id, name) VALUES ($1, $2)`, *row.id, row.name); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO tenant (id, name) VALUES ($1, $2)`, *row.id, row.name); err != nil {
 			t.Fatalf("insert tenant %s: %v", row.name, err)
 		}
 	}
@@ -39,26 +50,28 @@ func TestListObjectsIsTenantScoped(t *testing.T) {
 	mustExec(`INSERT INTO object (tenant_id, name) VALUES ($1, 'Other tenant object')`, tenantB)
 	mustExec(`INSERT INTO object (tenant_id, name, is_active) VALUES ($1, 'Retired stop', false)`, tenantA)
 
-	cfg := config.Config{DevTenantHeaderAuth: true}
-	router, _ := app.New(cfg, app.Deps{Pool: pool})
+	router, _ := app.New(config.Config{JWTSecret: testSecret}, app.Deps{Pool: pool})
 
-	get := func(headers map[string]string) *httptest.ResponseRecorder {
+	get := func(authz string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/staff/objects", nil)
-		for k, v := range headers {
-			req.Header.Set(k, v)
+		if authz != "" {
+			req.Header.Set("Authorization", authz)
 		}
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		return rec
 	}
 
-	// No auth header → 401 problem+json.
-	if rec := get(nil); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("no header: got %d, want 401; body: %s", rec.Code, rec.Body)
+	// No token → 401.
+	if rec := get(""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no token: got %d, want 401; body: %s", rec.Code, rec.Body)
 	}
-
-	// Tenant A sees exactly its one active object.
-	rec := get(map[string]string{"X-Dev-Tenant-Id": tenantA.String()})
+	// A worker token is authenticated but forbidden on a staff route → 403.
+	if rec := get(bearer(t, tenantA, auth.RoleWorker)); rec.Code != http.StatusForbidden {
+		t.Fatalf("worker on staff route: got %d, want 403; body: %s", rec.Code, rec.Body)
+	}
+	// Tenant A admin sees exactly its one active object.
+	rec := get(bearer(t, tenantA, auth.RoleAdmin))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tenant A: got %d; body: %s", rec.Code, rec.Body)
 	}
@@ -71,18 +84,5 @@ func TestListObjectsIsTenantScoped(t *testing.T) {
 	}
 	if strings.Contains(body, "Retired stop") {
 		t.Errorf("inactive objects must be filtered; body: %s", body)
-	}
-}
-
-func TestDevAuthDisabledMeansNoAccess(t *testing.T) {
-	pool := testdb.New(t)
-	router, _ := app.New(config.Config{DevTenantHeaderAuth: false}, app.Deps{Pool: pool})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/staff/objects", nil)
-	req.Header.Set("X-Dev-Tenant-Id", uuid.NewString())
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("dev auth off: got %d, want 401", rec.Code)
 	}
 }

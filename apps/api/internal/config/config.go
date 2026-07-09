@@ -9,16 +9,16 @@ import (
 )
 
 type Config struct {
-	HTTPAddr            string
-	DatabaseURL         string
-	S3Endpoint          string
-	S3Region            string
-	S3Bucket            string
-	S3AccessKey         string
-	S3SecretKey         string
-	S3UsePathStyle      bool
-	AdminOrigin         string // CORS origin; wired when apps/admin exists
-	DevTenantHeaderAuth bool
+	HTTPAddr       string
+	DatabaseURL    string
+	S3Endpoint     string
+	S3Region       string
+	S3Bucket       string
+	S3AccessKey    string
+	S3SecretKey    string
+	S3UsePathStyle bool
+	AdminOrigin    string // CORS origin; wired when apps/admin exists
+	JWTSecret      string
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -31,13 +31,11 @@ func Load(getenv func(string) string) (Config, error) {
 		S3AccessKey: getenv("S3_ACCESS_KEY"),
 		S3SecretKey: getenv("S3_SECRET_KEY"),
 		AdminOrigin: getenv("ADMIN_ORIGIN"),
+		JWTSecret:   getenv("JWT_SECRET"),
 	}
 
 	var err error
 	if cfg.S3UsePathStyle, err = parseBool(getenv, "S3_USE_PATH_STYLE"); err != nil {
-		return Config{}, err
-	}
-	if cfg.DevTenantHeaderAuth, err = parseBool(getenv, "DEV_TENANT_HEADER_AUTH"); err != nil {
 		return Config{}, err
 	}
 
@@ -48,6 +46,7 @@ func Load(getenv func(string) string) (Config, error) {
 		"S3_BUCKET":     cfg.S3Bucket,
 		"S3_ACCESS_KEY": cfg.S3AccessKey,
 		"S3_SECRET_KEY": cfg.S3SecretKey,
+		"JWT_SECRET":    cfg.JWTSecret,
 	} {
 		if v == "" {
 			missing = append(missing, name)
