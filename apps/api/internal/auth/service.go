@@ -20,6 +20,22 @@ var (
 	ErrInvalidInvite      = errors.New("invalid invite code")
 )
 
+// dummyPasswordHash is a valid argon2id hash that Login verifies the supplied
+// password against on every credential miss (unknown email, inactive user, or
+// credential-less account). Paying the ~50ms argon2id cost uniformly keeps
+// response latency from revealing whether an active credentialed account exists
+// at an email. It is computed once at startup with the current cost parameters,
+// so its timing tracks real hashes automatically if those parameters change.
+var dummyPasswordHash = mustDummyHash()
+
+func mustDummyHash() string {
+	h, err := HashPassword("dummy-password-for-constant-time-login")
+	if err != nil {
+		panic(fmt.Errorf("auth: precomputing dummy password hash: %w", err))
+	}
+	return h
+}
+
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *db.Queries
@@ -51,20 +67,23 @@ type TokenPair struct {
 
 func (s *Service) Login(ctx context.Context, email, password string) (LoginResult, error) {
 	u, err := s.q.GetUserByEmail(ctx, &email)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return LoginResult{}, ErrInvalidCredentials
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return LoginResult{}, fmt.Errorf("looking up user: %w", err)
 	}
-	if !u.IsActive || u.PasswordHash == nil {
-		return LoginResult{}, ErrInvalidCredentials
+	// Always run one argon2id verification — against the account's real hash on
+	// a hit, against a static dummy hash on every miss (unknown email, inactive
+	// user, or credential-less account) — so response latency never reveals
+	// whether an active credentialed account exists at this email.
+	hash := dummyPasswordHash
+	eligible := err == nil && u.IsActive && u.PasswordHash != nil
+	if eligible {
+		hash = *u.PasswordHash
 	}
-	ok, err := VerifyPassword(password, *u.PasswordHash)
+	ok, err := VerifyPassword(password, hash)
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("verifying password: %w", err)
 	}
-	if !ok {
+	if !eligible || !ok {
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	p := Principal{UserID: u.ID, TenantID: u.TenantID, Role: Role(u.Role)}
