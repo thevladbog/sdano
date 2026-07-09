@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -67,7 +68,7 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 </head>
 <body>
   <script id="api-reference" data-url="/openapi.json"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.62.5"></script>
 </body>
 </html>`))
 	})
@@ -89,6 +90,7 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 	}, func(ctx context.Context, _ *struct{}) (*healthOutput, error) {
 		for _, c := range deps.Checks {
 			if err := c.Ping(ctx); err != nil {
+				slog.Warn("health check failed", "dep", c.Name, "error", err)
 				return nil, huma.Error503ServiceUnavailable(
 					fmt.Sprintf("dependency %s unavailable", c.Name))
 			}

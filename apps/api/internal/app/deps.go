@@ -18,6 +18,7 @@ func NewPool(ctx context.Context, cfg config.Config) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("creating pgx pool: %w", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
 		return nil, fmt.Errorf("pinging database: %w", err)
 	}
 	return pool, nil

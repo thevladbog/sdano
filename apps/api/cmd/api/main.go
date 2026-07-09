@@ -51,6 +51,9 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
+	if cfg.DevTenantHeaderAuth {
+		logger.Warn("DEV tenant header auth enabled — never run in production")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

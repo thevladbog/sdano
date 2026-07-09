@@ -17,7 +17,7 @@ type Config struct {
 	S3AccessKey         string
 	S3SecretKey         string
 	S3UsePathStyle      bool
-	AdminOrigin         string
+	AdminOrigin         string // CORS origin; wired when apps/admin exists
 	DevTenantHeaderAuth bool
 }
 
