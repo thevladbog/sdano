@@ -188,6 +188,19 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 	return err
 }
 
+const lockUser = `-- name: LockUser :exec
+SELECT id FROM app_user WHERE id = $1 FOR UPDATE
+`
+
+// Per-user serialization point for refresh-token rotation vs reuse-triggered
+// revocation. Both hold this row lock for the whole transaction so a revocation
+// can never run concurrently with (and miss under READ COMMITTED) an in-flight
+// rotation's newly inserted refresh row.
+func (q *Queries) LockUser(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, lockUser, id)
+	return err
+}
+
 const markRefreshTokenUsed = `-- name: MarkRefreshTokenUsed :one
 UPDATE refresh_token SET used_at = now()
 WHERE id = $1 AND used_at IS NULL AND revoked_at IS NULL

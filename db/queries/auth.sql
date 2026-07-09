@@ -6,6 +6,13 @@ WHERE email = $1;
 -- name: GetTenantStatus :one
 SELECT status FROM tenant WHERE id = $1;
 
+-- name: LockUser :exec
+-- Per-user serialization point for refresh-token rotation vs reuse-triggered
+-- revocation. Both hold this row lock for the whole transaction so a revocation
+-- can never run concurrently with (and miss under READ COMMITTED) an in-flight
+-- rotation's newly inserted refresh row.
+SELECT id FROM app_user WHERE id = $1 FOR UPDATE;
+
 -- name: InsertRefreshToken :exec
 INSERT INTO refresh_token (tenant_id, user_id, token_hash, expires_at)
 VALUES ($1, $2, $3, $4);
