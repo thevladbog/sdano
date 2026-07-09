@@ -1,5 +1,9 @@
 name: ci
 
+# Version policy: action majors (checkout@v5, setup-go@v5, setup-node@v4,
+# golangci-lint-action@v8) are the latest known-good as of plan writing —
+# bump to the current majors when touching this file if newer exist.
+
 on:
   push:
     branches: [main]
