@@ -59,7 +59,7 @@ CREATE TABLE worker_invite (
 );
 
 CREATE TABLE device_token (                     -- long-lived worker sessions
-    id            uuid PRIMARY KEY,
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id     uuid NOT NULL REFERENCES tenant(id),
     user_id       uuid NOT NULL REFERENCES app_user(id),
     token_hash    text NOT NULL,
@@ -132,7 +132,7 @@ CREATE TABLE checklist_template_item (
 CREATE TYPE work_order_status AS ENUM ('scheduled', 'in_progress', 'done', 'missed');
 
 CREATE TABLE work_order (
-    id            uuid PRIMARY KEY,              -- may be client-generated later; server-generated in slice 1
+    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(), -- may be client-generated later; server-generated in slice 1
     tenant_id     uuid NOT NULL REFERENCES tenant(id),
     object_id     uuid NOT NULL REFERENCES object(id),
     version_id    uuid NOT NULL REFERENCES checklist_template_version(id), -- pinned template version
