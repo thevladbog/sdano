@@ -13,7 +13,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"sdano.app/api/internal/auth"
 	"sdano.app/api/internal/config"
+	"sdano.app/api/internal/db"
+	"sdano.app/api/internal/object"
 )
 
 // HealthCheck is a named dependency probe run by GET /healthz.
@@ -46,6 +49,12 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 	humaCfg.Info.Description = "Photo-evidence and reporting platform for field service contractors."
 	humaCfg.DocsPath = "/docs"
 	api := humachi.New(router, humaCfg)
+
+	api.UseMiddleware(auth.NewDevTenantHeader(api, cfg.DevTenantHeaderAuth))
+
+	if deps.Pool != nil {
+		object.Register(api, db.New(deps.Pool))
+	}
 
 	huma.Register(api, huma.Operation{
 		OperationID: "healthz",
