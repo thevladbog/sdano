@@ -81,6 +81,7 @@ services:
       S3_USE_PATH_STYLE: ${S3_USE_PATH_STYLE}
       ADMIN_ORIGIN: ${ADMIN_ORIGIN}
       JWT_SECRET: ${JWT_SECRET}
+      TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-0}
     ports:
       - "8080:8080"
     depends_on:

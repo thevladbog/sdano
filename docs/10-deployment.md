@@ -68,7 +68,7 @@ Two data classes, two strategies:
 ## Security posture
 
 - VPS: SSH keys only, non-root deploy user, ufw (80/443/22), unattended-upgrades.
-- Caddy: TLS 1.2+, HSTS. API: strict CORS (admin origin), rate limits on auth endpoints.
+- Caddy: TLS 1.2+, HSTS. API: strict CORS (admin origin). Rate limiting is app-level and two-tier: a pre-auth per-client-IP shield (strict on `/api/v1/auth/*`, an isolated class for `/healthz`, a generous ceiling elsewhere) plus a per-principal tier for authenticated traffic. The real client IP is read from `X-Forwarded-For` via one trusted proxy hop — set `TRUSTED_PROXY_COUNT=1` in the prod `.env` so Caddy's address does not become one global bucket.
 - Secrets never in the repo (env only); the repo is written as-if-public from day one (pivot discipline).
 - S3 IAM: production key can PUT/GET but not DELETE (see backups); presigned URLs are short-lived (15 min PUT, 5 min GET).
 - Postgres not exposed publicly (compose-internal network only).

@@ -156,7 +156,7 @@ The `execution_id` on a resolution is the loop link: "fixed during the planned v
 ## Cross-cutting
 
 - **Tenant status enforcement (one middleware, not per-handler checks).** The authenticated principal's tenant status gates requests per the table in 12-platform-ops.md: `trial`/`active` — full access; `suspended` — reads and exports allowed, mutations rejected with problem type `tenant-suspended` (403), **except** outbox flushes of work performed before suspension (`device_finished_at` < suspension timestamp) — evidence of performed work is never rejected on billing grounds; `archived` — 401. Report generation for past periods remains available under `suspended`.
-- **Rate limiting:** per-token, generous for workers (photo bursts are legitimate), stricter for auth endpoints.
+- **Rate limiting:** two-tier. Pre-auth, per real client IP (resolved from `X-Forwarded-For` behind the trusted proxy): strict on `/api/v1/auth/*`, an isolated class for `/healthz`, a generous DoS ceiling elsewhere. Post-auth, per verified principal — generous for workers (photo bursts are legitimate). Over-budget requests get `429` with the `rate-limited` problem type. Budgets are tunable, not contract.
 - **Versioning:** `/v1` in the path; additive changes preferred; breaking changes = new version (unlikely before the OSS pivot).
 - **Clock skew:** the server never rejects device timestamps for being "in the past"; it stores both device and server times (see data model, `device_finished_at`).
 - **CORS:** admin origin only; the mobile app doesn't need CORS.
