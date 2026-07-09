@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"sdano.app/api/internal/app"
@@ -67,5 +68,41 @@ func TestRateLimitIgnoresXFFWithoutTrustedProxy(t *testing.T) {
 	// XFF is ignored, so a "different" client on the same TCP peer is still limited.
 	if code := post("203.0.113.20"); code != http.StatusTooManyRequests {
 		t.Fatalf("without a trusted proxy, XFF must be ignored: got %d, want 429", code)
+	}
+}
+
+// TestRateLimitIgnoresSpoofedXFFPrefix proves that with one trusted proxy, only
+// the rightmost X-Forwarded-For entry (the value the proxy appends from the peer
+// it observed) keys the limiter — an attacker-controlled leftmost value cannot
+// move the key. Each request sends a two-entry chain "<spoofed>, <realPeer>".
+func TestRateLimitIgnoresSpoofedXFFPrefix(t *testing.T) {
+	pool := testdb.New(t)
+	router, _ := app.New(config.Config{TrustedProxyCount: 1}, app.Deps{Pool: pool})
+
+	post := func(spoofed, realPeer string) int {
+		body := []byte(`{"email":"nobody@example.test","password":"whatever-12345"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", spoofed+", "+realPeer)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// Exhaust the auth bucket for real peer 203.0.113.30, varying the spoofed
+	// prefix each time — if the spoof mattered, each would get a fresh bucket.
+	for i := 1; i <= 10; i++ {
+		if code := post("10.0.0."+strconv.Itoa(i), "203.0.113.30"); code == http.StatusTooManyRequests {
+			t.Fatalf("request %d was rate-limited too early", i)
+		}
+	}
+	// A brand-new spoofed prefix but the SAME real peer is still limited: the key
+	// came from the trusted rightmost entry, not the spoofable prefix.
+	if code := post("10.0.0.250", "203.0.113.30"); code != http.StatusTooManyRequests {
+		t.Fatalf("spoofed prefix moved the rate-limit key: got %d, want 429", code)
+	}
+	// A different real peer (rightmost) is a separate bucket.
+	if code := post("10.0.0.1", "203.0.113.31"); code == http.StatusTooManyRequests {
+		t.Fatalf("different trusted peer must be a separate bucket: got %d, want non-429", code)
 	}
 }

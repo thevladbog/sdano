@@ -84,7 +84,7 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 	rl := auth.NewRateLimiter(auth.RateLimitConfig{
 		AuthPerMin:      10,   // /api/v1/auth/* per client IP
 		HealthzPerMin:   60,   // /healthz per client IP (isolated)
-		IPCeilingPerMin: 1200, // pre-auth DoS ceiling on all other routes, per client IP
+		IPCeilingPerMin: 3000, // pre-auth DoS backstop per client IP; ~10x the per-principal budget so it does not undercut per-principal fairness for up to ~10 concurrently-active workers behind one shared carrier-NAT IP
 		PrincipalPerMin: 300,  // authenticated ops, per verified principal
 	})
 	api.UseMiddleware(rl.LimitByIP, authn.Authenticate, rl.LimitByPrincipal, authn.Authorize)
