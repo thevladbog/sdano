@@ -4,12 +4,15 @@ package object
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"sdano.app/api/internal/auth"
 	"sdano.app/api/internal/db"
@@ -63,6 +66,83 @@ func Register(api huma.API, queries *db.Queries) {
 				IsActive:  r.IsActive,
 				CreatedAt: r.CreatedAt.Time,
 			})
+		}
+		return out, nil
+	})
+
+	registerWorkerQR(api, queries)
+}
+
+func problem(status int, slug, detail string) *huma.ErrorModel {
+	return &huma.ErrorModel{Type: slug, Title: http.StatusText(status), Status: status, Detail: detail}
+}
+
+type qrObject struct {
+	ID       uuid.UUID `json:"id"`
+	Name     string    `json:"name"`
+	Address  *string   `json:"address"`
+	Lat      *float64  `json:"lat"`
+	Lon      *float64  `json:"lon"`
+	Kind     *string   `json:"kind"`
+	QRToken  *string   `json:"qr_token"`
+	IsActive bool      `json:"is_active"`
+}
+
+type qrTodayOrder struct {
+	ID        uuid.UUID `json:"id"`
+	ObjectID  uuid.UUID `json:"object_id"`
+	DueDate   string    `json:"due_date"`
+	Status    string    `json:"status"`
+	VersionID uuid.UUID `json:"version_id"`
+}
+
+type qrInput struct {
+	QRToken string `path:"qr_token"`
+}
+
+type qrOutput struct {
+	Body struct {
+		Object         qrObject      `json:"object"`
+		TodayWorkOrder *qrTodayOrder `json:"today_work_order"`
+	}
+}
+
+func registerWorkerQR(api huma.API, queries *db.Queries) {
+	huma.Register(api, huma.Operation{
+		OperationID: "workerObjectByQR",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/worker/objects/by-qr/{qr_token}",
+		Summary:     "Resolve an object by its QR token",
+		Tags:        []string{"worker"},
+	}, func(ctx context.Context, in *qrInput) (*qrOutput, error) {
+		p, ok := auth.PrincipalFrom(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		token := in.QRToken
+		obj, err := queries.GetObjectByQr(ctx, db.GetObjectByQrParams{TenantID: p.TenantID, QrToken: &token})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, problem(http.StatusNotFound, "qr-not-found", "no object for this QR token")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("resolving qr: %w", err)
+		}
+		out := &qrOutput{}
+		out.Body.Object = qrObject{
+			ID: obj.ID, Name: obj.Name, Address: obj.Address, Lat: obj.Lat, Lon: obj.Lon,
+			Kind: obj.Kind, QRToken: obj.QrToken, IsActive: obj.IsActive,
+		}
+		wo, err := queries.GetWorkerOrderForObject(ctx, db.GetWorkerOrderForObjectParams{
+			TenantID: p.TenantID, AssigneeID: uuid.NullUUID{UUID: p.UserID, Valid: true}, ObjectID: obj.ID,
+			DueDate: pgtype.Date{Time: time.Now().UTC(), Valid: true},
+		})
+		if err == nil {
+			out.Body.TodayWorkOrder = &qrTodayOrder{
+				ID: wo.ID, ObjectID: wo.ObjectID, DueDate: wo.DueDate.Time.Format("2006-01-02"),
+				Status: string(wo.Status), VersionID: wo.VersionID,
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("resolving today order: %w", err)
 		}
 		return out, nil
 	})

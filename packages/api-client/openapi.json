@@ -739,6 +739,116 @@
         ],
         "type": "object"
       },
+      "QrObject": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lat": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "lon": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "qr_token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "address",
+          "lat",
+          "lon",
+          "kind",
+          "qr_token",
+          "is_active"
+        ],
+        "type": "object"
+      },
+      "QrOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/QrOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/QrObject"
+          },
+          "today_work_order": {
+            "$ref": "#/components/schemas/QrTodayOrder"
+          }
+        },
+        "required": [
+          "object",
+          "today_work_order"
+        ],
+        "type": "object"
+      },
+      "QrTodayOrder": {
+        "additionalProperties": false,
+        "properties": {
+          "due_date": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "object_id",
+          "due_date",
+          "status",
+          "version_id"
+        ],
+        "type": "object"
+      },
       "RefreshInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -1187,6 +1297,47 @@
           }
         },
         "summary": "Idempotent full-state execution upsert",
+        "tags": [
+          "worker"
+        ]
+      }
+    },
+    "/api/v1/worker/objects/by-qr/{qr_token}": {
+      "get": {
+        "operationId": "workerObjectByQR",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "qr_token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QrOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Resolve an object by its QR token",
         "tags": [
           "worker"
         ]

@@ -259,6 +259,37 @@ export interface PresignOutputBody {
   upload_url: string;
 }
 
+export interface QrObject {
+  /** @nullable */
+  address: string | null;
+  id: string;
+  is_active: boolean;
+  /** @nullable */
+  kind: string | null;
+  /** @nullable */
+  lat: number | null;
+  /** @nullable */
+  lon: number | null;
+  name: string;
+  /** @nullable */
+  qr_token: string | null;
+}
+
+export interface QrTodayOrder {
+  due_date: string;
+  id: string;
+  object_id: string;
+  status: string;
+  version_id: string;
+}
+
+export interface QrOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  object: QrObject;
+  today_work_order: QrTodayOrder;
+}
+
 export interface RefreshInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -607,6 +638,56 @@ export const upsertWorkerExecution = async (id: string,
 
   const data: upsertWorkerExecutionResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as upsertWorkerExecutionResponse
+}
+
+
+
+export type workerObjectByQRResponse200 = {
+  data: QrOutputBody
+  status: 200
+}
+
+export type workerObjectByQRResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type workerObjectByQRResponseSuccess = (workerObjectByQRResponse200) & {
+  headers: Headers;
+};
+export type workerObjectByQRResponseError = (workerObjectByQRResponseDefault) & {
+  headers: Headers;
+};
+
+export type workerObjectByQRResponse = (workerObjectByQRResponseSuccess | workerObjectByQRResponseError)
+
+export const getWorkerObjectByQRUrl = (qrToken: string,) => {
+
+
+
+
+  return `/api/v1/worker/objects/by-qr/${qrToken}`
+}
+
+/**
+ * @summary Resolve an object by its QR token
+ */
+export const workerObjectByQR = async (qrToken: string, options?: RequestInit): Promise<workerObjectByQRResponse> => {
+
+  const res = await fetch(getWorkerObjectByQRUrl(qrToken),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: workerObjectByQRResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as workerObjectByQRResponse
 }
 
 
