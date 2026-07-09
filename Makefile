@@ -1,3 +1,7 @@
+# Optional: absent in CI (drift jobs don't need it), required for dev targets.
+-include .env
+export
+
 COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
 MIGRATIONS := $(CURDIR)/db/migrations
 # Runs on the compose network so `postgres` resolves on macOS and Linux alike.
@@ -5,14 +9,11 @@ MIGRATE := docker run --rm -v $(MIGRATIONS):/migrations --network sdano_default 
   migrate/migrate:v4 -path=/migrations \
   -database "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)?sslmode=disable"
 
-# Optional: absent in CI (drift jobs don't need it), required for dev targets.
--include .env
-export
-
 .PHONY: dev-up dev-down migrate-up migrate-down migrate-drop generate-sqlc openapi generate-client generate lint test drift
 
 dev-up:
-	$(COMPOSE) --profile dev up -d --wait
+	$(COMPOSE) --profile dev up -d --wait postgres minio headless-shell
+	$(COMPOSE) --profile dev up -d minio-setup
 
 dev-down:
 	$(COMPOSE) --profile dev down
