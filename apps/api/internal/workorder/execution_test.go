@@ -201,3 +201,52 @@ func TestExecutionUpsertRejectsCrossTenantIDCollision(t *testing.T) {
 		t.Errorf("victim's execution items must survive the attacker's colliding-id request: %v", items)
 	}
 }
+
+// TestExecutionUpsertRejectsWorkOrderRepointing proves that reusing an
+// existing execution id under a *different* one of the worker's own assigned
+// orders is rejected. UpsertWorkExecution's ON CONFLICT DO UPDATE never
+// changes work_order_id, so without this check the request would half-apply:
+// order2's status would flip (in-progress/done) while the execution row (and
+// the response echoing it) stayed bound to order1.
+func TestExecutionUpsertRejectsWorkOrderRepointing(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	f := seedExecutionFixture(t, pool, uuid.New())
+
+	// A second work order, also assigned to f.worker in the same tenant.
+	object2, version2, tmpl2 := uuid.New(), uuid.New(), uuid.New()
+	order2 := uuid.New()
+	must := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	must(`INSERT INTO object (id, tenant_id, name) VALUES ($1,$2,'Obj2')`, object2, f.tenant)
+	must(`INSERT INTO checklist_template (id, tenant_id, name) VALUES ($1,$2,'T2')`, tmpl2, f.tenant)
+	must(`INSERT INTO checklist_template_version (id, template_id, version) VALUES ($1,$2,1)`, version2, tmpl2)
+	must(`INSERT INTO work_order (id, tenant_id, object_id, version_id, assignee_id, due_date) VALUES ($1,$2,$3,$4,$5,current_date)`,
+		order2, f.tenant, object2, version2, f.worker)
+
+	execID := uuid.New()
+	if err := workorder.UpsertExecution(ctx, pool, f.tenant, f.worker, execID, workorder.ExecutionInput{
+		WorkOrderID: f.order,
+	}); err != nil {
+		t.Fatalf("apply to order1: %v", err)
+	}
+
+	err := workorder.UpsertExecution(ctx, pool, f.tenant, f.worker, execID, workorder.ExecutionInput{
+		WorkOrderID: order2,
+	})
+	if !errors.Is(err, workorder.ErrExecutionIDConflict) {
+		t.Fatalf("re-pointing an execution to a different order must be rejected: got %v", err)
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM work_order WHERE id=$1`, order2).Scan(&status); err != nil {
+		t.Fatalf("read order2 status: %v", err)
+	}
+	if status != "scheduled" {
+		t.Errorf("order2 status = %q, want scheduled (must not be flipped by the rejected request)", status)
+	}
+}

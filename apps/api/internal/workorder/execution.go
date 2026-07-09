@@ -89,13 +89,19 @@ func UpsertExecution(ctx context.Context, pool *pgxpool.Pool, tenantID, workerID
 		return fmt.Errorf("upsert execution: %w", err)
 	}
 
-	// Confirm the write actually landed under this tenant/worker. If
-	// executionID collided with another tenant's row, the ON CONFLICT WHERE
-	// guard in UpsertWorkExecution silently skipped the update — proceeding
-	// past that point would let DeleteExecutionItemsNotIn and
-	// UpsertWorkExecutionItem (neither of which are tenant-scoped) mutate
-	// that other tenant's evidence.
-	owner, err := qtx.GetExecutionForWorker(ctx, db.GetExecutionForWorkerParams{ID: executionID, TenantID: tenantID})
+	// Confirm the write actually landed under this tenant/worker, and that it
+	// is still bound to the requested work order. If executionID collided
+	// with another tenant's row, the ON CONFLICT WHERE guard in
+	// UpsertWorkExecution silently skipped the update — proceeding past that
+	// point would let DeleteExecutionItemsNotIn and UpsertWorkExecutionItem
+	// (neither of which are tenant-scoped) mutate that other tenant's
+	// evidence. Use GetExecution (not GetExecutionForWorker) because it also
+	// returns work_order_id: ON CONFLICT DO UPDATE never changes
+	// work_order_id, so a worker replaying an existing execution id under a
+	// *different* one of their own orders would otherwise flip that order's
+	// status while the execution row (and its response) stayed bound to the
+	// original order.
+	owner, err := qtx.GetExecution(ctx, db.GetExecutionParams{ID: executionID, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrExecutionIDConflict
 	}
@@ -103,6 +109,9 @@ func UpsertExecution(ctx context.Context, pool *pgxpool.Pool, tenantID, workerID
 		return fmt.Errorf("verifying execution ownership: %w", err)
 	}
 	if owner.WorkerID != workerID {
+		return ErrExecutionIDConflict
+	}
+	if owner.WorkOrderID != in.WorkOrderID {
 		return ErrExecutionIDConflict
 	}
 
@@ -122,6 +131,11 @@ func UpsertExecution(ctx context.Context, pool *pgxpool.Pool, tenantID, workerID
 		}
 	}
 
+	// status tracks device_finished_at, not finished_at: reopening (a later
+	// snapshot with device_finished_at nil) flips the order back to
+	// in_progress and resets finished_at server-side — see the finished_at
+	// CASE in UpsertWorkExecution (db/queries/worker.sql) for the full
+	// reset-on-reopen semantics.
 	status := db.WorkOrderStatusInProgress
 	if in.DeviceFinishedAt != nil {
 		status = db.WorkOrderStatusDone

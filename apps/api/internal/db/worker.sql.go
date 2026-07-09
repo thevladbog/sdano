@@ -512,6 +512,17 @@ INSERT INTO work_execution (
 ON CONFLICT (id) DO UPDATE SET
     started_at         = EXCLUDED.started_at,
     device_finished_at = EXCLUDED.device_finished_at,
+    -- finished_at = server time of the *most recent* completion (last-write-wins
+    -- domain semantics), not a first-completion-only stamp:
+    --   * reopen: a later snapshot with device_finished_at NULL resets
+    --     finished_at to NULL (the CASE's NULL branch).
+    --   * (re)complete: COALESCE stamps a fresh now() unless finished_at is
+    --     already set for *this* device_finished_at value, so replaying the
+    --     same completed snapshot is idempotent (stable finished_at).
+    --   * out-of-order delivery (a stale in-progress snapshot arriving after
+    --     a completed one) is bounded by the mobile outbox, which coalesces
+    --     to the latest snapshot per entity before sync — see docs/08. This
+    --     query does not itself guard against out-of-order replay.
     finished_at        = CASE
         WHEN EXCLUDED.device_finished_at IS NULL THEN NULL
         ELSE COALESCE(work_execution.finished_at, now())
