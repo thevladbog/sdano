@@ -217,7 +217,10 @@ func opsSetStatus(
 // OpsSetBilling sets tenant.billed_until and, when planNote is non-empty,
 // tenant.plan_note (an empty planNote leaves the existing note untouched —
 // OpsSetBilling's underlying query COALESCEs), then audits
-// `tenant.set-billing` with {"billed_until", "plan_note"}.
+// `tenant.set-billing`. The audit detail records only what was applied:
+// {"billed_until"} always, "plan_note" only when a note was actually
+// supplied — so a billing-history reader never sees a note change that
+// didn't happen.
 func OpsSetBilling(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, billedUntil time.Time, planNote string) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -243,10 +246,16 @@ func OpsSetBilling(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID, 
 		return fmt.Errorf("updating billing: %w", err)
 	}
 
-	detail, err := json.Marshal(map[string]string{
+	// Record only what was applied: an empty planNote left the column
+	// untouched (COALESCE above), so writing `"plan_note": ""` here would
+	// falsely tell an audit reader the note was cleared. Omit the key.
+	detailFields := map[string]string{
 		"billed_until": billedUntil.Format("2006-01-02"),
-		"plan_note":    planNote,
-	})
+	}
+	if planNote != "" {
+		detailFields["plan_note"] = planNote
+	}
+	detail, err := json.Marshal(detailFields)
 	if err != nil {
 		return fmt.Errorf("marshaling audit detail: %w", err)
 	}
@@ -287,9 +296,11 @@ func isUniqueViolation(err error) bool {
 
 // slugify keeps the [a-z0-9] subset of the lowercased name. If that yields
 // nothing (a name with no latin letters or digits at all, e.g.
-// "ЧистоГрад"), it falls back to the first 8 hex characters of tenantID —
-// unique per tenant, so same-named non-latin tenants never collide on the
-// fallback either.
+// "ЧистоГрад"), it falls back to the first 8 hex characters of tenantID.
+// The prefix is only 32 bits, so it makes same-named non-latin tenants
+// collide with negligible probability rather than never — the real
+// guarantee is app_user.email's unique constraint, which turns any
+// collision into OpsCreateTenant's loud slug-collision error.
 func slugify(name string, tenantID uuid.UUID) string {
 	s := slugDisallowed.ReplaceAllString(strings.ToLower(name), "")
 	if s != "" {

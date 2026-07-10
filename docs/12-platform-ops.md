@@ -49,8 +49,15 @@ sdano-ops tenant list
     → table: name, status, workers (active/total), executions last 7d,
       photos count / storage GB, billed_until, trial_ends_at
 
-sdano-ops tenant suspend|activate|archive <id> [--note "..."]
-sdano-ops tenant set-billing <id> --billed-until 2026-09-01 --plan-note "..."
+sdano-ops tenant suspend --id <uuid> [--note "..."]
+sdano-ops tenant activate --id <uuid>
+sdano-ops tenant set-billing --id <uuid> --billed-until 2026-09-01 [--plan-note "..."]
+    → omitting --plan-note keeps the existing note (the audit row records
+      only what was actually applied)
+
+sdano-ops tenant archive ...
+    → phase-A deferred: not yet in the CLI. The archived-status semantics
+      in this document still apply once it ships.
 
 sdano-ops stats
     → platform totals: tenants by status, executions/day trend, storage, top tenants by usage
@@ -60,7 +67,7 @@ sdano-ops export-tenant <id> --out ./export/
       also the GDPR/152-FZ "give me my data" answer
 ```
 
-Implementation notes: reuses the domain packages and sqlc queries (no parallel logic); every mutating command writes an `ops_audit` row (what, when, note) — the operator is not above the audit discipline.
+Implementation notes: reuses the domain packages and sqlc queries (no parallel logic); every mutating command writes an `ops_audit` row (what, when, note) — the operator is not above the audit discipline. Tenant ids are passed as `--id` flags rather than positional arguments: the CLI is stdlib `flag` only (no cobra), and `flag` stops parsing at the first positional token, so a uniform all-flags style is the simple correct shape.
 
 ```sql
 CREATE TABLE ops_audit (

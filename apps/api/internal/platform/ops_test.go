@@ -334,7 +334,10 @@ func TestOpsSetBilling(t *testing.T) {
 
 // TestOpsSetBillingEmptyPlanNoteKeepsExisting exercises the COALESCE
 // semantics of OpsSetBillingParams.PlanNote: an empty --plan-note must not
-// clobber a previously recorded note.
+// clobber a previously recorded note — and, just as important, the audit
+// row for that call must NOT contain a plan_note key at all. Recording
+// `"plan_note": ""` for a call that left the column untouched would
+// mislead anyone reconstructing billing history from ops_audit.
 func TestOpsSetBillingEmptyPlanNoteKeepsExisting(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -346,6 +349,17 @@ func TestOpsSetBillingEmptyPlanNoteKeepsExisting(t *testing.T) {
 	if err := platform.OpsSetBilling(ctx, pool, result.TenantID, time.Now(), "original note"); err != nil {
 		t.Fatalf("OpsSetBilling (first): %v", err)
 	}
+
+	// The supplied-note call's audit must record the exact applied value.
+	a := lastAudit(t, pool)
+	var detail map[string]any
+	if err := json.Unmarshal(a.Detail, &detail); err != nil {
+		t.Fatalf("audit detail must be valid JSON: %v", err)
+	}
+	if detail["plan_note"] != "original note" {
+		t.Errorf("supplied-note audit must record the applied note, got %v", detail)
+	}
+
 	if err := platform.OpsSetBilling(ctx, pool, result.TenantID, time.Now().AddDate(0, 1, 0), ""); err != nil {
 		t.Fatalf("OpsSetBilling (second, empty note): %v", err)
 	}
@@ -356,6 +370,20 @@ func TestOpsSetBillingEmptyPlanNoteKeepsExisting(t *testing.T) {
 	}
 	if planNote == nil || *planNote != "original note" {
 		t.Errorf("expected plan_note to remain 'original note', got %v", planNote)
+	}
+
+	// The empty-note call left plan_note untouched, so its audit detail
+	// must have no plan_note key at all (not even an empty string).
+	a = lastAudit(t, pool)
+	detail = nil
+	if err := json.Unmarshal(a.Detail, &detail); err != nil {
+		t.Fatalf("audit detail must be valid JSON: %v", err)
+	}
+	if _, present := detail["plan_note"]; present {
+		t.Errorf("empty-note audit detail must omit plan_note entirely, got %v", detail)
+	}
+	if _, present := detail["billed_until"]; !present {
+		t.Errorf("audit detail must still record billed_until, got %v", detail)
 	}
 }
 

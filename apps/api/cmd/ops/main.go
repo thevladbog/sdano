@@ -130,13 +130,13 @@ func cmdTenantCreate(ctx context.Context, pool *pgxpool.Pool, args []string) err
 	return nil
 }
 
-func cmdTenantList(_ context.Context, pool *pgxpool.Pool, args []string) error {
+func cmdTenantList(ctx context.Context, pool *pgxpool.Pool, args []string) error {
 	fs := newFlagSet("list", "list")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	rows, err := platform.OpsListTenants(context.Background(), pool)
+	rows, err := platform.OpsListTenants(ctx, pool)
 	if err != nil {
 		return fmt.Errorf("listing tenants: %w", err)
 	}
@@ -168,6 +168,7 @@ func cmdTenantSuspend(ctx context.Context, pool *pgxpool.Pool, args []string) er
 	}
 	tenantID, err := uuid.Parse(*id)
 	if err != nil {
+		fs.Usage()
 		return fmt.Errorf("invalid --id: %w", err)
 	}
 
@@ -190,6 +191,7 @@ func cmdTenantActivate(ctx context.Context, pool *pgxpool.Pool, args []string) e
 	}
 	tenantID, err := uuid.Parse(*id)
 	if err != nil {
+		fs.Usage()
 		return fmt.Errorf("invalid --id: %w", err)
 	}
 
@@ -214,10 +216,12 @@ func cmdTenantSetBilling(ctx context.Context, pool *pgxpool.Pool, args []string)
 	}
 	tenantID, err := uuid.Parse(*id)
 	if err != nil {
+		fs.Usage()
 		return fmt.Errorf("invalid --id: %w", err)
 	}
 	billedUntil, err := time.Parse("2006-01-02", *billedUntilStr)
 	if err != nil {
+		fs.Usage()
 		return fmt.Errorf("invalid --billed-until (want YYYY-MM-DD): %w", err)
 	}
 
