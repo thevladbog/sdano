@@ -215,6 +215,53 @@ func TestCreateReportForeignContractIsInvalidReference(t *testing.T) {
 	}
 }
 
+// TestCreateReportPendingCap proves one tenant cannot flood the single FIFO
+// render worker: the sixth report enqueued while five are still 'generating'
+// is a 429 report-queue-full, and the cap is per tenant — another tenant
+// still enqueues freely. Draining one slot (the worker flipping a row to
+// ready) reopens the queue.
+func TestCreateReportPendingCap(t *testing.T) {
+	pool := testdb.New(t)
+	tenant, admin := seedTenantAndAdmin(t, pool)
+	otherTenant, otherAdmin := seedTenantAndAdmin(t, pool)
+	api := buildReportAPI(t, pool)
+	bearer := "Authorization: " + bearerFor(t, tenant, admin, auth.RoleAdmin)
+
+	body := map[string]any{"period_from": "2026-06-01", "period_to": "2026-06-30"}
+	var lastID uuid.UUID
+	for i := 0; i < 5; i++ {
+		rec := api.Post("/api/v1/staff/reports", bearer, body)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("create #%d: got %d; body %s", i+1, rec.Code, rec.Body)
+		}
+		var created struct {
+			ReportID uuid.UUID `json:"report_id"`
+		}
+		decodeJSON(t, rec, &created)
+		lastID = created.ReportID
+	}
+
+	rec := api.Post("/api/v1/staff/reports", bearer, body)
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "report-queue-full") {
+		t.Fatalf("sixth create: got %d body %s, want 429 report-queue-full", rec.Code, rec.Body)
+	}
+
+	// The cap is per tenant, not global: a different tenant is unaffected.
+	otherBearer := "Authorization: " + bearerFor(t, otherTenant, otherAdmin, auth.RoleAdmin)
+	if rec := api.Post("/api/v1/staff/reports", otherBearer, body); rec.Code != http.StatusAccepted {
+		t.Fatalf("other tenant create: got %d; body %s, want 202 (cap must be per tenant)", rec.Code, rec.Body)
+	}
+
+	// Draining one slot reopens the queue (only 'generating' rows count).
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE report SET status='ready', s3_key='k', generated_at=now() WHERE id=$1`, lastID); err != nil {
+		t.Fatalf("flip ready: %v", err)
+	}
+	if rec := api.Post("/api/v1/staff/reports", bearer, body); rec.Code != http.StatusAccepted {
+		t.Fatalf("create after drain: got %d; body %s, want 202", rec.Code, rec.Body)
+	}
+}
+
 func TestGetReportNotFound(t *testing.T) {
 	pool := testdb.New(t)
 	tenant, admin := seedTenantAndAdmin(t, pool)
