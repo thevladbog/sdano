@@ -7,7 +7,7 @@ Base path: `/api/v1`.
 ## Conventions
 
 - **IDs:** UUIDs. Mobile-created resources send their own `id` (client-generated, idempotent upsert on the server).
-- **Errors:** RFC 7807 `application/problem+json` (huma's default). Stable machine-readable `type` slugs, including: `invite-code-invalid`, `tenant-archived`, `tenant-suspended`, `rate-limited`, `work-order-not-assigned` (403), `execution-id-conflict` (409), `execution-item-conflict` (409), `invalid-checklist-item` (422), `execution-not-found` (404), `photo-not-found` (404), `photo-not-uploaded` (409), `photo-id-conflict` (409), `photo-already-uploaded` (409), `unsupported-content-type` (422), `qr-not-found` (404).
+- **Errors:** RFC 7807 `application/problem+json` (huma's default). Stable machine-readable `type` slugs, including: `invite-code-invalid`, `tenant-archived`, `tenant-suspended`, `rate-limited`, `work-order-not-assigned` (403), `execution-id-conflict` (409), `execution-item-conflict` (409), `invalid-checklist-item` (422), `execution-not-found` (404), `photo-not-found` (404), `photo-not-uploaded` (409), `photo-id-conflict` (409), `photo-already-uploaded` (409), `unsupported-content-type` (422), `qr-not-found` (404), `object-not-found` (404), `work-order-not-found` (404), `worker-not-found` (404), `invalid-cursor` (422), `invalid-reference` (422), `invalid-date` (422).
 - **Timestamps:** RFC 3339 with offset. Mobile sends device-clock times explicitly where the field name says so.
 - **Idempotency:** all mobile POSTs are upserts keyed by client UUID. Replaying a request is always safe and returns 200 with the current state (not 409).
 - **Pagination:** cursor-based, `?cursor=...&limit=...`, response carries `next_cursor`. Only where lists can grow (executions, issues, photos).
@@ -106,6 +106,7 @@ GET /staff/dashboard?date=2026-07-08
     objects: [ { object, today_status, last_activity_at, worker_name, photo_count } ] }
 ```
 One endpoint answering "is everything okay today?" — the 3-second screen renders from a single call.
+`totals.overdue` counts scheduled/in-progress orders whose `due_date` precedes tenant-local today; the phase-6 nightly job will convert those to `missed`.
 
 ### Objects
 ```
