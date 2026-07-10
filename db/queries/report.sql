@@ -76,7 +76,7 @@ SELECT wo.object_id, e.id AS execution_id, wo.due_date,
        (SELECT count(*) FROM work_execution_item i WHERE i.execution_id = e.id) AS total_items
 FROM work_execution e
 JOIN work_order wo ON wo.id = e.work_order_id AND wo.tenant_id = e.tenant_id
-JOIN app_user u ON u.id = e.worker_id
+JOIN app_user u ON u.id = e.worker_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = sqlc.arg(tenant_id)
   AND wo.due_date BETWEEN sqlc.arg(period_from) AND sqlc.arg(period_to)
   AND e.device_finished_at IS NOT NULL
