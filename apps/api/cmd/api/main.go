@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -89,13 +90,20 @@ func run(logger *slog.Logger) error {
 	// no reason to share it across the process's two consumers.
 	store := photo.NewS3Store(s3c, cfg.S3Bucket)
 	reportWorker := report.NewWorker(pool, store, report.NewChromeRenderer(cfg.ChromeCDPURL))
-	go reportWorker.Run(ctx)
 
 	// Hourly scheduler: tenant-timezone-aware missed-order marking + orphan
 	// photo GC (task 6). Shares the same store and signal ctx as the report
-	// worker above — both stop on the same shutdown signal.
+	// worker — both stop on the same shutdown signal.
 	scheduler := platform.NewScheduler(pool, store)
-	go scheduler.Run(ctx)
+
+	// bg tracks the two background loops so shutdown waits for their current
+	// iteration to wind down (e.g. the report worker's detached fail-mark
+	// write) before the deferred pool.Close() yanks the DB out from under
+	// them.
+	var bg sync.WaitGroup
+	bg.Add(2)
+	go func() { defer bg.Done(); reportWorker.Run(ctx) }()
+	go func() { defer bg.Done(); scheduler.Run(ctx) }()
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -111,6 +119,11 @@ func run(logger *slog.Logger) error {
 
 	select {
 	case err := <-errCh:
+		// The server died on its own (no signal): cancel the background ctx
+		// explicitly, or bg.Wait would block forever on the still-running
+		// loops.
+		stop()
+		bg.Wait()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("http server: %w", err)
 		}
@@ -121,6 +134,7 @@ func run(logger *slog.Logger) error {
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("graceful shutdown: %w", err)
 		}
+		bg.Wait()
 		logger.Info("api stopped")
 		return nil
 	}
