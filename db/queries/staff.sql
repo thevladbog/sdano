@@ -86,8 +86,11 @@ WHERE tenant_id = sqlc.arg(tenant_id)
 ORDER BY due_date DESC, created_at DESC
 LIMIT 500;
 
--- name: CountObjectsInTenant :one
-SELECT count(*) FROM object WHERE tenant_id = $1 AND id = ANY(sqlc.arg(ids)::uuid[]);
+-- name: CountActiveObjectsInTenant :one
+-- Deactivated objects are excluded on purpose: a new work order for one
+-- would be visible to its assignee while the object's QR no longer resolves
+-- (GetObjectByQr filters is_active), so bulk create rejects such references.
+SELECT count(*) FROM object WHERE tenant_id = $1 AND is_active AND id = ANY(sqlc.arg(ids)::uuid[]);
 
 -- name: CountVersionsInTenant :one
 SELECT count(*) FROM checklist_template_version v
@@ -111,14 +114,16 @@ SELECT count(*) FROM contract WHERE tenant_id = $1 AND id = ANY(sqlc.arg(ids)::u
 -- worker_invite directly (a real table) lets sqlc infer nullability
 -- correctly; DISTINCT ON collapses to the single latest unused invite per
 -- worker, and the outer SELECT re-sorts by display_name since DISTINCT ON's
--- ORDER BY must lead with the distinct key (u.id).
+-- ORDER BY must lead with the distinct key (u.id). wi.id is a deterministic
+-- tie-breaker: invites issued in one transaction share a now()-derived
+-- expires_at, and DISTINCT ON must not pick between them by chance.
 SELECT * FROM (
     SELECT DISTINCT ON (u.id) u.id, u.display_name, u.is_active, u.created_at,
            wi.code AS pending_code, wi.expires_at AS pending_expires_at
     FROM app_user u
     LEFT JOIN worker_invite wi ON wi.user_id = u.id AND wi.used_at IS NULL AND wi.expires_at > now()
     WHERE u.tenant_id = sqlc.arg(tenant_id) AND u.role = 'worker'
-    ORDER BY u.id, wi.expires_at DESC NULLS LAST
+    ORDER BY u.id, wi.expires_at DESC NULLS LAST, wi.id
 ) sub
 ORDER BY display_name;
 
@@ -184,7 +189,10 @@ FROM photo WHERE id = $1 AND tenant_id = $2;
 -- directly so finished_at/created_at nullability is unambiguous. DISTINCT ON
 -- picks the single latest execution per order; the photo-count correlated
 -- subquery naturally yields 0 (not NULL) when e.id is NULL, so no COALESCE
--- is needed. The outer SELECT re-sorts by object_name.
+-- is needed. The outer SELECT re-sorts by object_name. e.id DESC is a
+-- deterministic tie-breaker: executions written in one transaction (a
+-- worker's outbox flush) share a created_at, and DISTINCT ON must not pick
+-- between them by chance.
 SELECT * FROM (
     SELECT DISTINCT ON (wo.id)
         wo.id AS order_id, wo.status, wo.due_date,
@@ -196,6 +204,6 @@ SELECT * FROM (
     LEFT JOIN work_execution e ON e.work_order_id = wo.id AND e.tenant_id = wo.tenant_id
     LEFT JOIN app_user u ON u.id = e.worker_id
     WHERE wo.tenant_id = sqlc.arg(tenant_id) AND wo.due_date = sqlc.arg(due_date)
-    ORDER BY wo.id, e.created_at DESC NULLS LAST
+    ORDER BY wo.id, e.created_at DESC NULLS LAST, e.id DESC
 ) sub
 ORDER BY object_name;

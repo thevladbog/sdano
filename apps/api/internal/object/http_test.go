@@ -165,6 +165,11 @@ func TestListObjectsFiltersByContract(t *testing.T) {
 	if !strings.Contains(body, "Under contract A") {
 		t.Errorf("must include the object under contract A; body: %s", body)
 	}
+	// contract_id reads back on the object payload (it is settable, so it
+	// must be visible too).
+	if !strings.Contains(body, `"contract_id":"`+contractA.String()+`"`) {
+		t.Errorf("object payload must carry contract_id; body: %s", body)
+	}
 	if strings.Contains(body, "Under contract B") || strings.Contains(body, "No contract") {
 		t.Errorf("must exclude objects not under contract A; body: %s", body)
 	}

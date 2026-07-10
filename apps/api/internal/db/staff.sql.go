@@ -12,6 +12,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countActiveObjectsInTenant = `-- name: CountActiveObjectsInTenant :one
+SELECT count(*) FROM object WHERE tenant_id = $1 AND is_active AND id = ANY($2::uuid[])
+`
+
+type CountActiveObjectsInTenantParams struct {
+	TenantID uuid.UUID
+	Ids      []uuid.UUID
+}
+
+// Deactivated objects are excluded on purpose: a new work order for one
+// would be visible to its assignee while the object's QR no longer resolves
+// (GetObjectByQr filters is_active), so bulk create rejects such references.
+func (q *Queries) CountActiveObjectsInTenant(ctx context.Context, arg CountActiveObjectsInTenantParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveObjectsInTenant, arg.TenantID, arg.Ids)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countActiveWorkersInTenant = `-- name: CountActiveWorkersInTenant :one
 SELECT count(*) FROM app_user
 WHERE tenant_id = $1 AND role = 'worker' AND is_active AND id = ANY($2::uuid[])
@@ -40,22 +59,6 @@ type CountContractsInTenantParams struct {
 
 func (q *Queries) CountContractsInTenant(ctx context.Context, arg CountContractsInTenantParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countContractsInTenant, arg.TenantID, arg.Ids)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countObjectsInTenant = `-- name: CountObjectsInTenant :one
-SELECT count(*) FROM object WHERE tenant_id = $1 AND id = ANY($2::uuid[])
-`
-
-type CountObjectsInTenantParams struct {
-	TenantID uuid.UUID
-	Ids      []uuid.UUID
-}
-
-func (q *Queries) CountObjectsInTenant(ctx context.Context, arg CountObjectsInTenantParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countObjectsInTenant, arg.TenantID, arg.Ids)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -535,7 +538,7 @@ SELECT order_id, status, due_date, object_id, object_name, address, lat, lon, wo
     LEFT JOIN work_execution e ON e.work_order_id = wo.id AND e.tenant_id = wo.tenant_id
     LEFT JOIN app_user u ON u.id = e.worker_id
     WHERE wo.tenant_id = $1 AND wo.due_date = $2
-    ORDER BY wo.id, e.created_at DESC NULLS LAST
+    ORDER BY wo.id, e.created_at DESC NULLS LAST, e.id DESC
 ) sub
 ORDER BY object_name
 `
@@ -568,7 +571,10 @@ type ListDashboardOrdersRow struct {
 // directly so finished_at/created_at nullability is unambiguous. DISTINCT ON
 // picks the single latest execution per order; the photo-count correlated
 // subquery naturally yields 0 (not NULL) when e.id is NULL, so no COALESCE
-// is needed. The outer SELECT re-sorts by object_name.
+// is needed. The outer SELECT re-sorts by object_name. e.id DESC is a
+// deterministic tie-breaker: executions written in one transaction (a
+// worker's outbox flush) share a created_at, and DISTINCT ON must not pick
+// between them by chance.
 func (q *Queries) ListDashboardOrders(ctx context.Context, arg ListDashboardOrdersParams) ([]ListDashboardOrdersRow, error) {
 	rows, err := q.db.Query(ctx, listDashboardOrders, arg.TenantID, arg.DueDate)
 	if err != nil {
@@ -791,7 +797,7 @@ SELECT id, display_name, is_active, created_at, pending_code, pending_expires_at
     FROM app_user u
     LEFT JOIN worker_invite wi ON wi.user_id = u.id AND wi.used_at IS NULL AND wi.expires_at > now()
     WHERE u.tenant_id = $1 AND u.role = 'worker'
-    ORDER BY u.id, wi.expires_at DESC NULLS LAST
+    ORDER BY u.id, wi.expires_at DESC NULLS LAST, wi.id
 ) sub
 ORDER BY display_name
 `
@@ -813,7 +819,9 @@ type ListWorkersRow struct {
 // worker_invite directly (a real table) lets sqlc infer nullability
 // correctly; DISTINCT ON collapses to the single latest unused invite per
 // worker, and the outer SELECT re-sorts by display_name since DISTINCT ON's
-// ORDER BY must lead with the distinct key (u.id).
+// ORDER BY must lead with the distinct key (u.id). wi.id is a deterministic
+// tie-breaker: invites issued in one transaction share a now()-derived
+// expires_at, and DISTINCT ON must not pick between them by chance.
 func (q *Queries) ListWorkers(ctx context.Context, tenantID uuid.UUID) ([]ListWorkersRow, error) {
 	rows, err := q.db.Query(ctx, listWorkers, tenantID)
 	if err != nil {

@@ -254,6 +254,7 @@ func TestStaffWorkOrdersBulkCreateListPatch(t *testing.T) {
 	tenant, worker := uuid.New(), uuid.New()
 	object, tmpl, version := uuid.New(), uuid.New(), uuid.New()
 	otherTenantObject := uuid.New()
+	deactivatedObject := uuid.New()
 	otherTenant := uuid.New()
 	must := func(q string, args ...any) {
 		t.Helper()
@@ -266,6 +267,7 @@ func TestStaffWorkOrdersBulkCreateListPatch(t *testing.T) {
 	must(`INSERT INTO app_user (id,tenant_id,role,display_name) VALUES ($1,$2,'worker','A')`, worker, tenant)
 	must(`INSERT INTO object (id,tenant_id,name) VALUES ($1,$2,'O')`, object, tenant)
 	must(`INSERT INTO object (id,tenant_id,name) VALUES ($1,$2,'Foreign')`, otherTenantObject, otherTenant)
+	must(`INSERT INTO object (id,tenant_id,name,is_active) VALUES ($1,$2,'Closed',false)`, deactivatedObject, tenant)
 	must(`INSERT INTO checklist_template (id,tenant_id,name) VALUES ($1,$2,'T')`, tmpl, tenant)
 	must(`INSERT INTO checklist_template_version (id,template_id,version) VALUES ($1,$2,1)`, version, tmpl)
 
@@ -302,11 +304,20 @@ func TestStaffWorkOrdersBulkCreateListPatch(t *testing.T) {
 	if after := countOrders(t, pool, tenant); after != before {
 		t.Errorf("failed batch must create nothing: before=%d after=%d", before, after)
 	}
+	// A deactivated object is rejected like an unknown one: the worker would
+	// see the order while the object's QR no longer resolves.
+	deact := `[{"object_id":"` + deactivatedObject.String() + `","version_id":"` + version.String() + `","due_date":"2026-07-15"}]`
+	if rec = do(http.MethodPost, "/api/v1/staff/work-orders", deact); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "invalid-reference") {
+		t.Fatalf("deactivated-object batch: got %d; body %s", rec.Code, rec.Body)
+	}
+	if after := countOrders(t, pool, tenant); after != before {
+		t.Errorf("deactivated-object batch must create nothing: before=%d after=%d", before, after)
+	}
 	// A literal JSON `null` body satisfies the generated ["array","null"]
 	// schema and bypasses minItems, so the handler must reject it explicitly
 	// instead of silently 201-ing with created:0.
 	beforeNull := countOrders(t, pool, tenant)
-	if rec = do(http.MethodPost, "/api/v1/staff/work-orders", "null"); rec.Code != http.StatusUnprocessableEntity {
+	if rec = do(http.MethodPost, "/api/v1/staff/work-orders", "null"); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "invalid-order-batch") {
 		t.Fatalf("null body: got %d; body %s", rec.Code, rec.Body)
 	}
 	if after := countOrders(t, pool, tenant); after != beforeNull {

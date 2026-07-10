@@ -348,15 +348,17 @@ func uuidSetToSlice(set map[uuid.UUID]struct{}) []uuid.UUID {
 // validateOrderReferences checks that every distinct object/version/assignee
 // id referenced by a bulk-create batch actually belongs to this tenant,
 // comparing the distinct count submitted against the count found. A mismatch
-// means at least one id is unknown or belongs to another tenant.
+// means at least one id is unknown, belongs to another tenant, or is a
+// deactivated object/worker (deactivated objects can't take new orders — a
+// worker would see the order while the object's QR no longer resolves).
 func validateOrderReferences(ctx context.Context, q *db.Queries, tenantID uuid.UUID, objectIDs, versionIDs, assigneeIDs map[uuid.UUID]struct{}) error {
 	if len(objectIDs) > 0 {
-		n, err := q.CountObjectsInTenant(ctx, db.CountObjectsInTenantParams{TenantID: tenantID, Ids: uuidSetToSlice(objectIDs)})
+		n, err := q.CountActiveObjectsInTenant(ctx, db.CountActiveObjectsInTenantParams{TenantID: tenantID, Ids: uuidSetToSlice(objectIDs)})
 		if err != nil {
 			return fmt.Errorf("counting objects: %w", err)
 		}
 		if int(n) != len(objectIDs) {
-			return problem(http.StatusUnprocessableEntity, "invalid-reference", "one or more object_id values are unknown for this tenant")
+			return problem(http.StatusUnprocessableEntity, "invalid-reference", "one or more object_id values are unknown or deactivated for this tenant")
 		}
 	}
 	if len(versionIDs) > 0 {
@@ -445,9 +447,12 @@ type patchOrderBody struct {
 	DueDate    *string `json:"due_date,omitempty" example:"2026-07-20" doc:"YYYY-MM-DD"`
 }
 
+// patchOrderInput.Body is a pointer: every field is optional, so the body as
+// a whole is too (huma marks any non-pointer Body required in the schema and
+// rejects requests without one). A missing/empty body is a valid no-op patch.
 type patchOrderInput struct {
 	ID   string `path:"id"`
-	Body patchOrderBody
+	Body *patchOrderBody
 }
 
 type orderOutput struct {
@@ -475,7 +480,7 @@ func registerStaffOrders(api huma.API, pool *pgxpool.Pool) {
 		}
 
 		if in.Body == nil {
-			return nil, problem(http.StatusUnprocessableEntity, "invalid-reference", "request body must be a non-empty array of orders")
+			return nil, problem(http.StatusUnprocessableEntity, "invalid-order-batch", "request body must be a non-empty array of orders")
 		}
 
 		parsed, objectIDs, versionIDs, assigneeIDs, perr := parseOrderBatch(in.Body)
@@ -491,10 +496,13 @@ func registerStaffOrders(api huma.API, pool *pgxpool.Pool) {
 		qtx := q.WithTx(tx)
 
 		// Reference validation runs inside the transaction (against qtx, not
-		// the outer q) so it observes the same snapshot as the inserts below:
-		// a worker/object/version deactivated or reassigned to another tenant
-		// concurrently with this batch can't validate here and then vanish
-		// (or vice versa) before the inserts commit.
+		// the outer q), and FKs guarantee the referenced rows still exist at
+		// insert time. It is not serializable, though: the count SELECTs take
+		// no locks, so under READ COMMITTED an is_active flip (worker or
+		// object deactivated concurrently) can still land between validation
+		// and commit. Accepted: a deactivated worker's tokens no longer
+		// authenticate and staff can reassign; a deactivated object's order
+		// can be rescheduled or left to the nightly missed-marking job.
 		if err := validateOrderReferences(ctx, qtx, principal.TenantID, objectIDs, versionIDs, assigneeIDs); err != nil {
 			return nil, err
 		}
@@ -589,9 +597,13 @@ func registerStaffOrders(api huma.API, pool *pgxpool.Pool) {
 		if err != nil {
 			return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid work order id")
 		}
+		body := patchOrderBody{}
+		if in.Body != nil {
+			body = *in.Body
+		}
 		params := db.UpdateWorkOrderParams{ID: id, TenantID: principal.TenantID}
-		if in.Body.AssigneeID != nil {
-			aid, err := uuid.Parse(*in.Body.AssigneeID)
+		if body.AssigneeID != nil {
+			aid, err := uuid.Parse(*body.AssigneeID)
 			if err != nil {
 				return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid assignee_id")
 			}
@@ -604,8 +616,8 @@ func registerStaffOrders(api huma.API, pool *pgxpool.Pool) {
 			}
 			params.AssigneeID = uuid.NullUUID{UUID: aid, Valid: true}
 		}
-		if in.Body.DueDate != nil {
-			d, err := time.Parse(dateLayout, *in.Body.DueDate)
+		if body.DueDate != nil {
+			d, err := time.Parse(dateLayout, *body.DueDate)
 			if err != nil {
 				return nil, problem(http.StatusUnprocessableEntity, "invalid-date", "due_date must be YYYY-MM-DD")
 			}

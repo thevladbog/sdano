@@ -272,6 +272,7 @@ export interface Object {
   readonly $schema?: string;
   /** @nullable */
   address: string | null;
+  contract_id: string;
   created_at: string;
   id: string;
   is_active: boolean;
@@ -412,7 +413,7 @@ export interface PatchOrderBody {
   due_date?: string;
 }
 
-export interface PatchWorkerInputBody {
+export interface PatchWorkerBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   display_name?: string;
@@ -494,7 +495,7 @@ export interface RefreshInputBody {
   refresh_token: string;
 }
 
-export interface ReinviteWorkerInputBody {
+export interface ReinviteWorkerBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   revoke_tokens?: boolean;
@@ -1116,7 +1117,7 @@ export const getPatchStaffObjectUrl = (id: string,) => {
  * @summary Update an object
  */
 export const patchStaffObject = async (id: string,
-    objectPatchBody: NonReadonly<ObjectPatchBody>, options?: RequestInit): Promise<patchStaffObjectResponse> => {
+    objectPatchBody?: NonReadonly<ObjectPatchBody>, options?: RequestInit): Promise<patchStaffObjectResponse> => {
 
   const res = await fetch(getPatchStaffObjectUrl(id),
   {
@@ -1533,7 +1534,7 @@ export const getPatchStaffWorkOrderUrl = (id: string,) => {
  * @summary Reassign or reschedule a work order
  */
 export const patchStaffWorkOrder = async (id: string,
-    patchOrderBody: NonReadonly<PatchOrderBody>, options?: RequestInit): Promise<patchStaffWorkOrderResponse> => {
+    patchOrderBody?: NonReadonly<PatchOrderBody>, options?: RequestInit): Promise<patchStaffWorkOrderResponse> => {
 
   const res = await fetch(getPatchStaffWorkOrderUrl(id),
   {
@@ -1684,14 +1685,14 @@ export const getPatchStaffWorkerUrl = (id: string,) => {
  * @summary Rename or activate/deactivate a worker
  */
 export const patchStaffWorker = async (id: string,
-    patchWorkerInputBody: NonReadonly<PatchWorkerInputBody>, options?: RequestInit): Promise<patchStaffWorkerResponse> => {
+    patchWorkerBody?: NonReadonly<PatchWorkerBody>, options?: RequestInit): Promise<patchStaffWorkerResponse> => {
 
   const res = await fetch(getPatchStaffWorkerUrl(id),
   {
     ...options,
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(patchWorkerInputBody)
+    body: JSON.stringify(patchWorkerBody)
   }
 )
 
@@ -1735,14 +1736,14 @@ export const getReinviteStaffWorkerUrl = (id: string,) => {
  * @summary Issue a fresh invite code for a worker
  */
 export const reinviteStaffWorker = async (id: string,
-    reinviteWorkerInputBody: NonReadonly<ReinviteWorkerInputBody>, options?: RequestInit): Promise<reinviteStaffWorkerResponse> => {
+    reinviteWorkerBody?: NonReadonly<ReinviteWorkerBody>, options?: RequestInit): Promise<reinviteStaffWorkerResponse> => {
 
   const res = await fetch(getReinviteStaffWorkerUrl(id),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(reinviteWorkerInputBody)
+    body: JSON.stringify(reinviteWorkerBody)
   }
 )
 
