@@ -82,6 +82,7 @@ services:
       ADMIN_ORIGIN: ${ADMIN_ORIGIN}
       JWT_SECRET: ${JWT_SECRET}
       TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-0}
+      CHROME_CDP_URL: http://headless-shell:9222
     ports:
       - "8080:8080"
     depends_on:

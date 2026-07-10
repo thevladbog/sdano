@@ -106,3 +106,25 @@ func TestLoadRejectsNonNumericTrustedProxyCount(t *testing.T) {
 		t.Fatal("Load must reject a non-numeric TRUSTED_PROXY_COUNT")
 	}
 }
+
+func TestLoadDefaultsChromeCDPURL(t *testing.T) {
+	cfg, err := Load(fakeEnv(validEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ChromeCDPURL != "http://localhost:9222" {
+		t.Errorf("ChromeCDPURL default = %q, want http://localhost:9222", cfg.ChromeCDPURL)
+	}
+}
+
+func TestLoadReadsChromeCDPURL(t *testing.T) {
+	env := validEnv()
+	env["CHROME_CDP_URL"] = "http://headless-shell:9222"
+	cfg, err := Load(fakeEnv(env))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ChromeCDPURL != "http://headless-shell:9222" {
+		t.Errorf("ChromeCDPURL = %q, want http://headless-shell:9222", cfg.ChromeCDPURL)
+	}
+}

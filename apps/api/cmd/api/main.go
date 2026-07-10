@@ -12,8 +12,16 @@ import (
 	"syscall"
 	"time"
 
+	// Report rendering formats times via time.LoadLocation(tenant.timezone)
+	// (internal/report/data.go). Embedding the IANA database guards minimal
+	// container images (e.g. distroless, no /usr/share/zoneinfo) from
+	// silently falling back to UTC instead of the tenant's zone.
+	_ "time/tzdata"
+
 	"sdano.app/api/internal/app"
 	"sdano.app/api/internal/config"
+	"sdano.app/api/internal/photo"
+	"sdano.app/api/internal/report"
 )
 
 func main() {
@@ -74,6 +82,13 @@ func run(logger *slog.Logger) error {
 			app.S3Check(s3c, cfg.S3Bucket),
 		},
 	})
+
+	// Separate ObjectStore instance for the report worker (app.New builds
+	// its own internally from deps.S3 for the HTTP handlers) — cheap struct,
+	// no reason to share it across the process's two consumers.
+	store := photo.NewS3Store(s3c, cfg.S3Bucket)
+	reportWorker := report.NewWorker(pool, store, report.NewChromeRenderer(cfg.ChromeCDPURL))
+	go reportWorker.Run(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
