@@ -123,7 +123,7 @@ const getObjectByQr = `-- name: GetObjectByQr :one
 
 SELECT id, name, address, lat, lon, kind, qr_token, is_active
 FROM object
-WHERE tenant_id = $1 AND qr_token = $2
+WHERE tenant_id = $1 AND qr_token = $2 AND is_active
 `
 
 type GetObjectByQrParams struct {
@@ -199,11 +199,25 @@ func (q *Queries) GetPhoto(ctx context.Context, arg GetPhotoParams) (GetPhotoRow
 	return i, err
 }
 
+const getTenantTimezone = `-- name: GetTenantTimezone :one
+
+SELECT timezone FROM tenant WHERE id = $1
+`
+
+// === tenant settings ========================================================
+func (q *Queries) GetTenantTimezone(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getTenantTimezone, id)
+	var timezone string
+	err := row.Scan(&timezone)
+	return timezone, err
+}
+
 const getWorkOrderForWorker = `-- name: GetWorkOrderForWorker :one
 
 SELECT id, object_id, assignee_id, status, version_id
 FROM work_order
 WHERE id = $1 AND tenant_id = $2
+FOR UPDATE
 `
 
 type GetWorkOrderForWorkerParams struct {
@@ -220,6 +234,14 @@ type GetWorkOrderForWorkerRow struct {
 }
 
 // === execution upsert ======================================================
+// Locked: called inside UpsertExecution's transaction so the assignment
+// check and the rest of the upsert share one row lock on work_order. This
+// serializes a concurrent staff reassignment (UpdateWorkOrder) against an
+// in-flight worker upsert instead of letting both interleave and leave the
+// execution bound to a worker who is no longer assigned.
+// FOR UPDATE (not FOR SHARE): the same transaction later UPDATEs this row
+// (SetWorkOrderStatus); a shared lock would deadlock two concurrent upserts
+// of the same order on lock upgrade. Exclusive from the start serializes them.
 func (q *Queries) GetWorkOrderForWorker(ctx context.Context, arg GetWorkOrderForWorkerParams) (GetWorkOrderForWorkerRow, error) {
 	row := q.db.QueryRow(ctx, getWorkOrderForWorker, arg.ID, arg.TenantID)
 	var i GetWorkOrderForWorkerRow
@@ -390,23 +412,29 @@ func (q *Queries) ListExecutionItems(ctx context.Context, executionID uuid.UUID)
 }
 
 const listExecutionPhotos = `-- name: ListExecutionPhotos :many
-SELECT id, kind, taken_at, lat, lon, uploaded_at
+SELECT id, kind, s3_key, taken_at, lat, lon, uploaded_at
 FROM photo
-WHERE execution_id = $1
+WHERE execution_id = $1 AND tenant_id = $2
 ORDER BY id
 `
+
+type ListExecutionPhotosParams struct {
+	ExecutionID uuid.NullUUID
+	TenantID    uuid.UUID
+}
 
 type ListExecutionPhotosRow struct {
 	ID         uuid.UUID
 	Kind       PhotoKind
+	S3Key      string
 	TakenAt    pgtype.Timestamptz
 	Lat        *float64
 	Lon        *float64
 	UploadedAt pgtype.Timestamptz
 }
 
-func (q *Queries) ListExecutionPhotos(ctx context.Context, executionID uuid.NullUUID) ([]ListExecutionPhotosRow, error) {
-	rows, err := q.db.Query(ctx, listExecutionPhotos, executionID)
+func (q *Queries) ListExecutionPhotos(ctx context.Context, arg ListExecutionPhotosParams) ([]ListExecutionPhotosRow, error) {
+	rows, err := q.db.Query(ctx, listExecutionPhotos, arg.ExecutionID, arg.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -417,6 +445,7 @@ func (q *Queries) ListExecutionPhotos(ctx context.Context, executionID uuid.Null
 		if err := rows.Scan(
 			&i.ID,
 			&i.Kind,
+			&i.S3Key,
 			&i.TakenAt,
 			&i.Lat,
 			&i.Lon,

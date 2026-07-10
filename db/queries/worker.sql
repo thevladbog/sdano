@@ -20,9 +20,18 @@ ORDER BY i.version_id, i.position;
 -- === execution upsert ======================================================
 
 -- name: GetWorkOrderForWorker :one
+-- Locked: called inside UpsertExecution's transaction so the assignment
+-- check and the rest of the upsert share one row lock on work_order. This
+-- serializes a concurrent staff reassignment (UpdateWorkOrder) against an
+-- in-flight worker upsert instead of letting both interleave and leave the
+-- execution bound to a worker who is no longer assigned.
+-- FOR UPDATE (not FOR SHARE): the same transaction later UPDATEs this row
+-- (SetWorkOrderStatus); a shared lock would deadlock two concurrent upserts
+-- of the same order on lock upgrade. Exclusive from the start serializes them.
 SELECT id, object_id, assignee_id, status, version_id
 FROM work_order
-WHERE id = $1 AND tenant_id = $2;
+WHERE id = $1 AND tenant_id = $2
+FOR UPDATE;
 
 -- name: UpsertWorkExecution :exec
 -- Full-state idempotent upsert. finished_at is server receipt time, stamped
@@ -84,9 +93,9 @@ WHERE execution_id = $1
 ORDER BY id;
 
 -- name: ListExecutionPhotos :many
-SELECT id, kind, taken_at, lat, lon, uploaded_at
+SELECT id, kind, s3_key, taken_at, lat, lon, uploaded_at
 FROM photo
-WHERE execution_id = $1
+WHERE execution_id = sqlc.arg(execution_id) AND tenant_id = sqlc.arg(tenant_id)
 ORDER BY id;
 
 -- === photos (two-phase) ====================================================
@@ -116,7 +125,7 @@ WHERE id = $1 AND tenant_id = $2;
 -- name: GetObjectByQr :one
 SELECT id, name, address, lat, lon, kind, qr_token, is_active
 FROM object
-WHERE tenant_id = $1 AND qr_token = $2;
+WHERE tenant_id = $1 AND qr_token = $2 AND is_active;
 
 -- name: GetWorkerOrderForObject :one
 SELECT id, object_id, due_date, status, version_id
@@ -124,3 +133,8 @@ FROM work_order
 WHERE tenant_id = $1 AND assignee_id = $2 AND object_id = $3 AND due_date = $4
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- === tenant settings ========================================================
+
+-- name: GetTenantTimezone :one
+SELECT timezone FROM tenant WHERE id = $1;

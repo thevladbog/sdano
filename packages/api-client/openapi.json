@@ -1,6 +1,38 @@
 {
   "components": {
     "schemas": {
+      "BulkCreateOrdersOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/BulkCreateOrdersOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "created",
+          "ids"
+        ],
+        "type": "object"
+      },
       "Checklist": {
         "additionalProperties": false,
         "properties": {
@@ -123,6 +155,142 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "CreateWorkerInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/CreateWorkerInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "display_name": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "DashboardObjectView": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "last_activity_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "lat": {
+            "format": "double",
+            "type": "number"
+          },
+          "lon": {
+            "format": "double",
+            "type": "number"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "object_name": {
+            "type": "string"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "photo_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "worker_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "object_id",
+          "object_name",
+          "order_id",
+          "status",
+          "photo_count"
+        ],
+        "type": "object"
+      },
+      "DashboardOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/DashboardOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardObjectView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "totals": {
+            "$ref": "#/components/schemas/DashboardTotals"
+          }
+        },
+        "required": [
+          "date",
+          "totals",
+          "objects"
+        ],
+        "type": "object"
+      },
+      "DashboardTotals": {
+        "additionalProperties": false,
+        "properties": {
+          "done": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "in_progress": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "overdue": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "done",
+          "in_progress",
+          "overdue",
+          "total"
+        ],
         "type": "object"
       },
       "ErrorDetail": {
@@ -452,6 +620,63 @@
         ],
         "type": "object"
       },
+      "ListExecutionsOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/ListExecutionsOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "executions": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectExecutionView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executions"
+        ],
+        "type": "object"
+      },
+      "ListOrdersOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/ListOrdersOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "work_orders": {
+            "items": {
+              "$ref": "#/components/schemas/WorkOrderView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "work_orders"
+        ],
+        "type": "object"
+      },
       "ListOutputBody": {
         "additionalProperties": false,
         "properties": {
@@ -476,6 +701,33 @@
         },
         "required": [
           "objects"
+        ],
+        "type": "object"
+      },
+      "ListWorkersOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/ListWorkersOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/StaffWorkerView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "workers"
         ],
         "type": "object"
       },
@@ -559,6 +811,15 @@
       "Object": {
         "additionalProperties": false,
         "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/Object.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
           "address": {
             "type": [
               "string",
@@ -622,6 +883,239 @@
           "is_active",
           "created_at"
         ],
+        "type": "object"
+      },
+      "ObjectBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/ObjectBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "contract_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "lat": {
+            "format": "double",
+            "type": "number"
+          },
+          "lon": {
+            "format": "double",
+            "type": "number"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "qr_token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "ObjectCardOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/ObjectCardOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/Object"
+          },
+          "recent_executions": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectExecutionView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "object",
+          "recent_executions"
+        ],
+        "type": "object"
+      },
+      "ObjectExecutionView": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "device_finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "photo_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "work_order_id": {
+            "type": "string"
+          },
+          "worker_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "work_order_id",
+          "created_at",
+          "worker_name",
+          "photo_count"
+        ],
+        "type": "object"
+      },
+      "ObjectPatchBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/ObjectPatchBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "contract_id": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "lat": {
+            "format": "double",
+            "type": "number"
+          },
+          "lon": {
+            "format": "double",
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "qr_token": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "OrderCreateBody": {
+        "additionalProperties": false,
+        "properties": {
+          "assignee_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "due_date": {
+            "description": "YYYY-MM-DD",
+            "examples": [
+              "2026-07-13"
+            ],
+            "type": "string"
+          },
+          "object_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "object_id",
+          "version_id",
+          "due_date"
+        ],
+        "type": "object"
+      },
+      "PatchOrderBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/PatchOrderBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "assignee_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "due_date": {
+            "description": "YYYY-MM-DD",
+            "examples": [
+              "2026-07-20"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchWorkerInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/PatchWorkerInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        },
         "type": "object"
       },
       "PhotoView": {
@@ -869,6 +1363,240 @@
         ],
         "type": "object"
       },
+      "ReinviteWorkerInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/ReinviteWorkerInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "revoke_tokens": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "StaffExecutionDetailView": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/StaffExecutionDetailView.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "device_finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StaffExecutionItemView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "object_name": {
+            "type": "string"
+          },
+          "photos": {
+            "items": {
+              "$ref": "#/components/schemas/StaffExecutionPhotoView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "work_order_id": {
+            "type": "string"
+          },
+          "worker_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "work_order_id",
+          "object_id",
+          "object_name",
+          "worker_name",
+          "created_at",
+          "items",
+          "photos"
+        ],
+        "type": "object"
+      },
+      "StaffExecutionItemView": {
+        "additionalProperties": false,
+        "properties": {
+          "checked": {
+            "type": "boolean"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "position": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "template_item_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "template_item_id",
+          "position",
+          "title",
+          "checked"
+        ],
+        "type": "object"
+      },
+      "StaffExecutionPhotoView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "lat": {
+            "format": "double",
+            "type": "number"
+          },
+          "lon": {
+            "format": "double",
+            "type": "number"
+          },
+          "taken_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "uploaded": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          },
+          "url_expires_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "uploaded"
+        ],
+        "type": "object"
+      },
+      "StaffPhotoURLOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/StaffPhotoURLOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "StaffWorkerView": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/StaffWorkerView.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "invite_code": {
+            "type": "string"
+          },
+          "invite_expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "is_active",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "TodayObject": {
         "additionalProperties": false,
         "properties": {
@@ -1034,6 +1762,51 @@
           "display_name",
           "email",
           "role"
+        ],
+        "type": "object"
+      },
+      "WorkOrderView": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/WorkOrderView.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "assignee_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "due_date": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "object_id",
+          "version_id",
+          "due_date",
+          "status",
+          "created_at"
         ],
         "type": "object"
       },
@@ -1219,9 +1992,114 @@
         ]
       }
     },
+    "/api/v1/staff/dashboard": {
+      "get": {
+        "operationId": "getStaffDashboard",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD; defaults to tenant-local today",
+            "explode": false,
+            "in": "query",
+            "name": "date",
+            "schema": {
+              "description": "YYYY-MM-DD; defaults to tenant-local today",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Per-object statuses and totals for a day",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/executions/{id}": {
+      "get": {
+        "operationId": "getStaffExecution",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffExecutionDetailView"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Execution detail: checklist items and photo evidence",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
     "/api/v1/staff/objects": {
       "get": {
         "operationId": "listStaffObjects",
+        "parameters": [
+          {
+            "description": "true or false; omit for no filter",
+            "explode": false,
+            "in": "query",
+            "name": "active",
+            "schema": {
+              "description": "true or false; omit for no filter",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "contract_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1244,7 +2122,574 @@
             "description": "Error"
           }
         },
-        "summary": "List active objects",
+        "summary": "List objects, optionally filtered by contract/active",
+        "tags": [
+          "staff"
+        ]
+      },
+      "post": {
+        "operationId": "createStaffObject",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObjectBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Object"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create an object",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/objects/{id}": {
+      "get": {
+        "operationId": "getStaffObject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectCardOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Object card: details plus recent executions",
+        "tags": [
+          "staff"
+        ]
+      },
+      "patch": {
+        "operationId": "patchStaffObject",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObjectPatchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Object"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Update an object",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/objects/{id}/executions": {
+      "get": {
+        "operationId": "listStaffObjectExecutions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListExecutionsOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Object execution history (cursor-paginated)",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/photos/{id}/url": {
+      "get": {
+        "operationId": "getStaffPhotoURL",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffPhotoURLOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Presigned GET URL for a confirmed photo",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/work-orders": {
+      "get": {
+        "operationId": "listStaffWorkOrders",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD",
+            "explode": false,
+            "in": "query",
+            "name": "date",
+            "schema": {
+              "description": "YYYY-MM-DD",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "object_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "assignee_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListOrdersOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List work orders",
+        "tags": [
+          "staff"
+        ]
+      },
+      "post": {
+        "operationId": "createStaffWorkOrders",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "$ref": "#/components/schemas/OrderCreateBody"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkCreateOrdersOutputBody"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Bulk-create work orders",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/work-orders/{id}": {
+      "patch": {
+        "operationId": "patchStaffWorkOrder",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchOrderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkOrderView"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Reassign or reschedule a work order",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/workers": {
+      "get": {
+        "operationId": "listStaffWorkers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListWorkersOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List workers",
+        "tags": [
+          "staff"
+        ]
+      },
+      "post": {
+        "operationId": "createStaffWorker",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkerInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffWorkerView"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Create a worker and issue an invite code",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/workers/{id}": {
+      "patch": {
+        "operationId": "patchStaffWorker",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchWorkerInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffWorkerView"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Rename or activate/deactivate a worker",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/workers/{id}/reinvite": {
+      "post": {
+        "operationId": "reinviteStaffWorker",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReinviteWorkerInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffWorkerView"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Issue a fresh invite code for a worker",
         "tags": [
           "staff"
         ]

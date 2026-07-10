@@ -16,9 +16,16 @@ const listObjects = `-- name: ListObjects :many
 SELECT id, name, address, lat, lon, kind, qr_token, contract_id, is_active, created_at
 FROM object
 WHERE tenant_id = $1
-  AND is_active
+  AND ($2::boolean IS NULL OR is_active = $2)
+  AND ($3::uuid IS NULL OR contract_id = $3)
 ORDER BY name
 `
+
+type ListObjectsParams struct {
+	TenantID   uuid.UUID
+	Active     *bool
+	ContractID uuid.NullUUID
+}
 
 type ListObjectsRow struct {
 	ID         uuid.UUID
@@ -33,8 +40,8 @@ type ListObjectsRow struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
-func (q *Queries) ListObjects(ctx context.Context, tenantID uuid.UUID) ([]ListObjectsRow, error) {
-	rows, err := q.db.Query(ctx, listObjects, tenantID)
+func (q *Queries) ListObjects(ctx context.Context, arg ListObjectsParams) ([]ListObjectsRow, error) {
+	rows, err := q.db.Query(ctx, listObjects, arg.TenantID, arg.Active, arg.ContractID)
 	if err != nil {
 		return nil, err
 	}

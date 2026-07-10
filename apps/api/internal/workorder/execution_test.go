@@ -386,3 +386,41 @@ func TestExecutionUpsertRejectsForeignTemplateItem(t *testing.T) {
 		t.Fatalf("foreign template item must be rejected: got %v", err)
 	}
 }
+
+// TestExecutionUpsertConcurrentSameOrder proves two concurrent upserts of the
+// same work order serialize (FOR UPDATE) instead of deadlocking — the failure
+// mode a FOR SHARE lock upgrade would produce.
+func TestExecutionUpsertConcurrentSameOrder(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	worker := uuid.New()
+	f := seedExecutionFixture(t, pool, worker)
+	done := time.Now().UTC()
+	snap := func(execID uuid.UUID) workorder.ExecutionInput {
+		return workorder.ExecutionInput{
+			WorkOrderID: f.order, StartedAt: &done, DeviceFinishedAt: &done,
+			Items: []workorder.ExecutionItemInput{},
+		}
+	}
+	const n = 4
+	execIDs := make([]uuid.UUID, n)
+	for i := range execIDs {
+		execIDs[i] = uuid.New()
+	}
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func(id uuid.UUID) {
+			errs <- workorder.UpsertExecution(ctx, pool, f.tenant, worker, id, snap(id))
+		}(execIDs[i])
+	}
+	for i := 0; i < n; i++ {
+		select {
+		case err := <-errs:
+			if err != nil {
+				t.Errorf("concurrent upsert %d failed: %v", i, err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("concurrent upserts deadlocked (timeout)")
+		}
+	}
+}

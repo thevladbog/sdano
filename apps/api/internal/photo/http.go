@@ -33,11 +33,12 @@ func ptr(v pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// Register wires the two-phase photo routes.
+// Register wires the two-phase photo routes plus the staff photo-URL read.
 func Register(api huma.API, pool *pgxpool.Pool, store ObjectStore) {
 	q := db.New(pool)
 	registerPresign(api, q, store)
 	registerConfirm(api, q, store)
+	registerStaffPhotoURL(api, q, store)
 }
 
 type presignInput struct {
@@ -236,6 +237,59 @@ func registerConfirm(api huma.API, q *db.Queries, store ObjectStore) {
 			ID: fresh.ID, Kind: string(fresh.Kind), TakenAt: ptr(fresh.TakenAt),
 			Lat: fresh.Lat, Lon: fresh.Lon, UploadedAt: ptr(fresh.UploadedAt),
 		}}
+		return out, nil
+	})
+}
+
+type staffPhotoURLInput struct {
+	ID string `path:"id"`
+}
+
+type staffPhotoURLOutput struct {
+	Body struct {
+		URL       string    `json:"url"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+}
+
+// registerStaffPhotoURL wires GET /api/v1/staff/photos/{id}/url: a
+// presigned-GET read of a confirmed photo's bytes. Evidence is never
+// silently dropped — an unconfirmed photo (uploaded_at still null) is a
+// loud 409, not a 404 or an empty URL, since the photo row itself does
+// exist.
+func registerStaffPhotoURL(api huma.API, q *db.Queries, store ObjectStore) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getStaffPhotoURL",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/staff/photos/{id}/url",
+		Summary:     "Presigned GET URL for a confirmed photo",
+		Tags:        []string{"staff"},
+	}, func(ctx context.Context, in *staffPhotoURLInput) (*staffPhotoURLOutput, error) {
+		p, ok := auth.PrincipalFrom(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		photoID, err := uuid.Parse(in.ID)
+		if err != nil {
+			return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid photo id")
+		}
+		ph, err := q.GetPhotoForStaff(ctx, db.GetPhotoForStaffParams{ID: photoID, TenantID: p.TenantID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, problem(http.StatusNotFound, "photo-not-found", "photo not found")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("loading photo: %w", err)
+		}
+		if !ph.UploadedAt.Valid {
+			return nil, problem(http.StatusConflict, "photo-not-uploaded", "photo has not been uploaded yet")
+		}
+		url, expires, err := store.PresignGet(ctx, ph.S3Key)
+		if err != nil {
+			return nil, fmt.Errorf("presigning: %w", err)
+		}
+		out := &staffPhotoURLOutput{}
+		out.Body.URL = url
+		out.Body.ExpiresAt = expires
 		return out, nil
 	})
 }

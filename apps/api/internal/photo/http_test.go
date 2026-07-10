@@ -14,6 +14,7 @@ import (
 	"sdano.app/api/internal/db"
 	"sdano.app/api/internal/photo"
 	"sdano.app/api/internal/testdb"
+	"sdano.app/api/internal/workorder"
 
 	"github.com/danielgtaylor/huma/v2/humatest"
 )
@@ -30,6 +31,9 @@ func (f *fakeStore) PresignPut(_ context.Context, key, _ string) (string, time.T
 }
 func (f *fakeStore) Exists(_ context.Context, key string) (bool, error) {
 	return f.exists[key], nil
+}
+func (f *fakeStore) PresignGet(_ context.Context, key string) (string, time.Time, error) {
+	return "https://s3.example/GET/" + key + "?sig=g", time.Now().Add(5 * time.Minute), nil
 }
 
 // seedExecution inserts a tenant, worker, object, version, order, and an
@@ -303,5 +307,73 @@ func TestPhotoPresignRejectsNonJpeg(t *testing.T) {
 	p := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, presignBody)
 	if p.Code != http.StatusUnprocessableEntity || !strings.Contains(p.Body.String(), "unsupported-content-type") {
 		t.Fatalf("non-jpeg presign: got %d body %s; want 422 unsupported-content-type", p.Code, p.Body)
+	}
+}
+
+// TestStaffPhotoURLAndExecutionDetail proves the staff evidence-read surface:
+// a presigned GET for a confirmed photo, a loud 409 for an unconfirmed one,
+// and an execution detail view whose photo list flags upload state per photo
+// (never silently dropping the unconfirmed one) rather than only listing
+// confirmed evidence.
+func TestStaffPhotoURLAndExecutionDetail(t *testing.T) {
+	pool := testdb.New(t)
+	tenant, worker, exec := seedExecution(t, pool)
+	store := &fakeStore{exists: map[string]bool{}}
+	// Full app (staff exec detail lives in workorder pkg) — build via app.New?
+	// app.New wires the REAL S3Store; for fake-store staff routes use humatest:
+	_, api := humatest.New(t)
+	a := auth.NewAuthenticator(testSecret, db.New(pool))
+	api.UseMiddleware(a.Authenticate, a.Authorize)
+	photo.Register(api, pool, store)
+	workorder.Register(api, pool, store)
+
+	adminTok, err := auth.IssueAccessToken(testSecret, auth.Principal{UserID: uuid.New(), TenantID: tenant, Role: auth.RoleAdmin}, auth.AccessTTL)
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	admin := "Authorization: Bearer " + adminTok
+
+	// Seed a confirmed photo via the worker flow.
+	photoID := uuid.New()
+	wtok, _ := auth.IssueAccessToken(testSecret, auth.Principal{UserID: worker, TenantID: tenant, Role: auth.RoleWorker}, auth.AccessTTL)
+	wb := "Authorization: Bearer " + wtok
+	pres := api.Post("/api/v1/worker/photos/presign", wb, map[string]any{"id": photoID.String(), "execution_id": exec.String(), "kind": "after", "content_type": "image/jpeg"})
+	if pres.Code != http.StatusOK {
+		t.Fatalf("presign: %d %s", pres.Code, pres.Body)
+	}
+	wantKey := "tenants/" + tenant.String() + "/photos/" + photoID.String() + ".jpg"
+	store.exists[wantKey] = true
+	if c := api.Post("/api/v1/worker/photos/"+photoID.String()+"/confirm", wb, map[string]any{"taken_at": "2026-07-10T09:00:00Z"}); c.Code != http.StatusOK {
+		t.Fatalf("confirm: %d %s", c.Code, c.Body)
+	}
+
+	// Staff photo URL: presigned GET for a confirmed photo.
+	rec := api.Get("/api/v1/staff/photos/"+photoID.String()+"/url", admin)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "https://s3.example/GET/"+wantKey) {
+		t.Fatalf("photo url: got %d; body %s", rec.Code, rec.Body)
+	}
+	// Unconfirmed photo -> 409 photo-not-uploaded.
+	photo2 := uuid.New()
+	if p2 := api.Post("/api/v1/worker/photos/presign", wb, map[string]any{"id": photo2.String(), "execution_id": exec.String(), "kind": "before", "content_type": "image/jpeg"}); p2.Code != http.StatusOK {
+		t.Fatalf("presign2: %d", p2.Code)
+	}
+	if rec = api.Get("/api/v1/staff/photos/"+photo2.String()+"/url", admin); rec.Code != http.StatusConflict {
+		t.Errorf("unconfirmed url: got %d, want 409", rec.Code)
+	}
+
+	// Execution detail: items with titles + photos (confirmed with URL, unconfirmed flagged).
+	rec = api.Get("/api/v1/staff/executions/"+exec.String(), admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("exec detail: got %d; body %s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"worker_name"`, photoID.String(), `"uploaded":true`, photo2.String(), `"uploaded":false`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("exec detail missing %q; body: %s", want, body)
+		}
+	}
+	// Unknown execution -> 404.
+	if rec = api.Get("/api/v1/staff/executions/"+uuid.NewString(), admin); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown exec: got %d, want 404", rec.Code)
 	}
 }

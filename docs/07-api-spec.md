@@ -7,7 +7,7 @@ Base path: `/api/v1`.
 ## Conventions
 
 - **IDs:** UUIDs. Mobile-created resources send their own `id` (client-generated, idempotent upsert on the server).
-- **Errors:** RFC 7807 `application/problem+json` (huma's default). Stable machine-readable `type` slugs, including: `invite-code-invalid`, `tenant-archived`, `tenant-suspended`, `rate-limited`, `work-order-not-assigned` (403), `execution-id-conflict` (409), `execution-item-conflict` (409), `invalid-checklist-item` (422), `execution-not-found` (404), `photo-not-found` (404), `photo-not-uploaded` (409), `photo-id-conflict` (409), `photo-already-uploaded` (409), `unsupported-content-type` (422), `qr-not-found` (404).
+- **Errors:** RFC 7807 `application/problem+json` (huma's default). Stable machine-readable `type` slugs, including: `invite-code-invalid`, `tenant-archived`, `tenant-suspended`, `rate-limited`, `work-order-not-assigned` (403), `execution-id-conflict` (409), `execution-item-conflict` (409), `qr-token-taken` (409), `invalid-checklist-item` (422), `execution-not-found` (404), `photo-not-found` (404), `photo-not-uploaded` (409), `photo-id-conflict` (409), `photo-already-uploaded` (409), `unsupported-content-type` (422), `qr-not-found` (404), `object-not-found` (404), `work-order-not-found` (404), `worker-not-found` (404), `invalid-cursor` (422), `invalid-reference` (422), `invalid-date` (422), `invalid-status` (422), `invalid-active` (422).
 - **Timestamps:** RFC 3339 with offset. Mobile sends device-clock times explicitly where the field name says so.
 - **Idempotency:** all mobile POSTs are upserts keyed by client UUID. Replaying a request is always safe and returns 200 with the current state (not 409).
 - **Pagination:** cursor-based, `?cursor=...&limit=...`, response carries `next_cursor`. Only where lists can grow (executions, issues, photos).
@@ -106,10 +106,11 @@ GET /staff/dashboard?date=2026-07-08
     objects: [ { object, today_status, last_activity_at, worker_name, photo_count } ] }
 ```
 One endpoint answering "is everything okay today?" — the 3-second screen renders from a single call.
+`totals.overdue` counts scheduled/in-progress orders whose `due_date` precedes tenant-local today; the phase-6 nightly job will convert those to `missed`.
 
 ### Objects
 ```
-GET    /staff/objects                          # list, filter by contract/active
+GET    /staff/objects?active=&contract_id=     # list; unfiltered = every object (active + inactive)
 POST   /staff/objects                          # create
 PATCH  /staff/objects/{id}
 GET    /staff/objects/{id}                     # card: recent executions, open issues
@@ -123,6 +124,7 @@ GET    /staff/work-orders?date=&object_id=&status=
 PATCH  /staff/work-orders/{id}                 # reassign / reschedule
 ```
 Bulk create is how the "pre-generated schedule" works in slice 1: the admin (or a script) creates a week of orders in one call.
+The list returns at most 500 orders; narrow with `date`/`object_id`/`assignee_id`/`status` filters (cursor pagination will come if a real client needs it).
 
 ### Workers & invites
 ```
@@ -164,6 +166,6 @@ The `execution_id` on a resolution is the loop link: "fixed during the planned v
 - **Rate limiting:** two-tier. Pre-auth, per real client IP (resolved from `X-Forwarded-For` behind the trusted proxy): strict on `/api/v1/auth/*`, an isolated class for `/healthz`, a generous DoS ceiling elsewhere. Post-auth, per verified principal — generous for workers (photo bursts are legitimate). Over-budget requests get `429` with the `rate-limited` problem type. Budgets are tunable, not contract.
 - **Versioning:** `/v1` in the path; additive changes preferred; breaking changes = new version (unlikely before the OSS pivot).
 - **Clock skew:** the server never rejects device timestamps for being "in the past"; it stores both device and server times (see data model, `device_finished_at`).
-- **"Today" is UTC, not tenant-local.** `due_date` and the server's notion of "today" (for `/worker/today` and QR order resolution) are the **UTC calendar date**. Tenant-timezone-aware "today" is deferred to phase 5 (staff scheduling); until bulk order creation exists, orders are created manually, so this is a known, accepted limitation.
+- **"Today" is tenant-local.** "today" for `/worker/today` and QR order resolution is computed in `tenant.timezone` (IANA, default UTC; set by the operator). Staff endpoints take explicit `?date=` filters. A deactivated object's QR token no longer resolves (404 `qr-not-found`).
 - **CORS:** admin origin only; the mobile app doesn't need CORS.
 - **OpenAPI artifacts:** CI publishes the generated spec; orval runs against it to regenerate `packages/api-client` — a PR fails if generated clients drift from committed ones.

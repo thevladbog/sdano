@@ -461,6 +461,7 @@ type Tenant struct {
 	BilledUntil pgtype.Date
 	OpsNote     *string
 	CreatedAt   pgtype.Timestamptz
+	Timezone    string
 }
 
 type WorkExecution struct {
@@ -472,6 +473,7 @@ type WorkExecution struct {
 	FinishedAt       pgtype.Timestamptz
 	DeviceFinishedAt pgtype.Timestamptz
 	Note             *string
+	CreatedAt        pgtype.Timestamptz
 }
 
 type WorkExecutionItem struct {
