@@ -167,7 +167,28 @@ export interface HealthOutputBody {
   status: string;
 }
 
+export interface ObjectExecutionView {
+  created_at: string;
+  device_finished_at?: string;
+  finished_at?: string;
+  id: string;
+  photo_count: number;
+  started_at?: string;
+  work_order_id: string;
+  worker_name: string;
+}
+
+export interface ListExecutionsOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  executions: ObjectExecutionView[] | null;
+  next_cursor?: string;
+}
+
 export interface Object {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   /** @nullable */
   address: string | null;
   created_at: string;
@@ -219,6 +240,40 @@ export interface LogoutInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   refresh_token: string;
+}
+
+export interface ObjectBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  address?: string;
+  contract_id?: string;
+  kind?: string;
+  lat?: number;
+  lon?: number;
+  /** @minLength 1 */
+  name: string;
+  qr_token?: string;
+}
+
+export interface ObjectCardOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  object: Object;
+  /** @nullable */
+  recent_executions: ObjectExecutionView[] | null;
+}
+
+export interface ObjectPatchBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  address?: string;
+  contract_id?: string;
+  is_active?: boolean;
+  kind?: string;
+  lat?: number;
+  lon?: number;
+  name?: string;
+  qr_token?: string;
 }
 
 export interface PhotoView {
@@ -333,6 +388,11 @@ export interface TokenPairOutputBody {
   access_token: string;
   refresh_token: string;
 }
+
+export type ListStaffObjectExecutionsParams = {
+cursor?: string;
+limit?: number;
+};
 
 export type HTTPStatusCode1xx = 100 | 101 | 102 | 103;
 export type HTTPStatusCode2xx = 200 | 201 | 202 | 203 | 204 | 205 | 206 | 207;
@@ -587,6 +647,216 @@ export const listStaffObjects = async ( options?: RequestInit): Promise<listStaf
 
   const data: listStaffObjectsResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as listStaffObjectsResponse
+}
+
+
+
+export type createStaffObjectResponse201 = {
+  data: Object
+  status: 201
+}
+
+export type createStaffObjectResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createStaffObjectResponseSuccess = (createStaffObjectResponse201) & {
+  headers: Headers;
+};
+export type createStaffObjectResponseError = (createStaffObjectResponseDefault) & {
+  headers: Headers;
+};
+
+export type createStaffObjectResponse = (createStaffObjectResponseSuccess | createStaffObjectResponseError)
+
+export const getCreateStaffObjectUrl = () => {
+
+
+
+
+  return `/api/v1/staff/objects`
+}
+
+/**
+ * @summary Create an object
+ */
+export const createStaffObject = async (objectBody: NonReadonly<ObjectBody>, options?: RequestInit): Promise<createStaffObjectResponse> => {
+
+  const res = await fetch(getCreateStaffObjectUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(objectBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createStaffObjectResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createStaffObjectResponse
+}
+
+
+
+export type getStaffObjectResponse200 = {
+  data: ObjectCardOutputBody
+  status: 200
+}
+
+export type getStaffObjectResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getStaffObjectResponseSuccess = (getStaffObjectResponse200) & {
+  headers: Headers;
+};
+export type getStaffObjectResponseError = (getStaffObjectResponseDefault) & {
+  headers: Headers;
+};
+
+export type getStaffObjectResponse = (getStaffObjectResponseSuccess | getStaffObjectResponseError)
+
+export const getGetStaffObjectUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/staff/objects/${id}`
+}
+
+/**
+ * @summary Object card: details plus recent executions
+ */
+export const getStaffObject = async (id: string, options?: RequestInit): Promise<getStaffObjectResponse> => {
+
+  const res = await fetch(getGetStaffObjectUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getStaffObjectResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getStaffObjectResponse
+}
+
+
+
+export type patchStaffObjectResponse200 = {
+  data: Object
+  status: 200
+}
+
+export type patchStaffObjectResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type patchStaffObjectResponseSuccess = (patchStaffObjectResponse200) & {
+  headers: Headers;
+};
+export type patchStaffObjectResponseError = (patchStaffObjectResponseDefault) & {
+  headers: Headers;
+};
+
+export type patchStaffObjectResponse = (patchStaffObjectResponseSuccess | patchStaffObjectResponseError)
+
+export const getPatchStaffObjectUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/staff/objects/${id}`
+}
+
+/**
+ * @summary Update an object
+ */
+export const patchStaffObject = async (id: string,
+    objectPatchBody: NonReadonly<ObjectPatchBody>, options?: RequestInit): Promise<patchStaffObjectResponse> => {
+
+  const res = await fetch(getPatchStaffObjectUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(objectPatchBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: patchStaffObjectResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as patchStaffObjectResponse
+}
+
+
+
+export type listStaffObjectExecutionsResponse200 = {
+  data: ListExecutionsOutputBody
+  status: 200
+}
+
+export type listStaffObjectExecutionsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listStaffObjectExecutionsResponseSuccess = (listStaffObjectExecutionsResponse200) & {
+  headers: Headers;
+};
+export type listStaffObjectExecutionsResponseError = (listStaffObjectExecutionsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listStaffObjectExecutionsResponse = (listStaffObjectExecutionsResponseSuccess | listStaffObjectExecutionsResponseError)
+
+export const getListStaffObjectExecutionsUrl = (id: string,
+    params?: ListStaffObjectExecutionsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/staff/objects/${id}/executions?${stringifiedParams}` : `/api/v1/staff/objects/${id}/executions`
+}
+
+/**
+ * @summary Object execution history (cursor-paginated)
+ */
+export const listStaffObjectExecutions = async (id: string,
+    params?: ListStaffObjectExecutionsParams, options?: RequestInit): Promise<listStaffObjectExecutionsResponse> => {
+
+  const res = await fetch(getListStaffObjectExecutionsUrl(id,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listStaffObjectExecutionsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listStaffObjectExecutionsResponse
 }
 
 
