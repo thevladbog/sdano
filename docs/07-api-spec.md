@@ -106,7 +106,7 @@ GET /staff/dashboard?date=2026-07-08
     objects: [ { object, today_status, last_activity_at, worker_name, photo_count } ] }
 ```
 One endpoint answering "is everything okay today?" — the 3-second screen renders from a single call.
-`totals.overdue` counts scheduled/in-progress orders whose `due_date` precedes tenant-local today; the phase-6 nightly job will convert those to `missed`.
+`totals.overdue` counts scheduled/in-progress orders whose `due_date` precedes tenant-local today; the hourly background job converts the scheduled ones to `missed`.
 
 ### Objects
 ```
