@@ -49,6 +49,7 @@ func Register(api huma.API, pool *pgxpool.Pool, store photo.ObjectStore) {
 	registerExecutions(api, pool)
 	registerStaffOrders(api, pool)
 	registerStaffExecutionDetail(api, q, store)
+	registerStaffDashboard(api, q)
 }
 
 type todayObject struct {
@@ -712,5 +713,104 @@ func registerStaffExecutionDetail(api huma.API, q *db.Queries, store photo.Objec
 			view.Photos = append(view.Photos, pv)
 		}
 		return &staffExecutionDetailOutput{Body: view}, nil
+	})
+}
+
+// === staff dashboard =========================================================
+
+type dashboardInput struct {
+	Date string `query:"date" doc:"YYYY-MM-DD; defaults to tenant-local today"`
+}
+
+type dashboardTotals struct {
+	Done       int `json:"done"`
+	InProgress int `json:"in_progress"`
+	Overdue    int `json:"overdue"`
+	Total      int `json:"total"`
+}
+
+type dashboardObjectView struct {
+	ObjectID       uuid.UUID  `json:"object_id"`
+	ObjectName     string     `json:"object_name"`
+	Address        *string    `json:"address,omitempty"`
+	Lat            *float64   `json:"lat,omitempty"`
+	Lon            *float64   `json:"lon,omitempty"`
+	OrderID        uuid.UUID  `json:"order_id"`
+	Status         string     `json:"status"`
+	WorkerName     *string    `json:"worker_name,omitempty"`
+	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
+	LastFinishedAt *time.Time `json:"last_finished_at,omitempty"`
+	PhotoCount     int64      `json:"photo_count"`
+}
+
+type dashboardOutput struct {
+	Body struct {
+		Date    string                `json:"date"`
+		Totals  dashboardTotals       `json:"totals"`
+		Objects []dashboardObjectView `json:"objects"`
+	}
+}
+
+// registerStaffDashboard wires GET /api/v1/staff/dashboard: per-object today
+// (or a requested date) statuses plus roll-up totals.
+//
+// "Overdue" is always judged against tenant-local *today* (fetched via
+// TenantToday regardless of whether a date was requested), not the queried
+// date — viewing a past date's dashboard should surface which of its
+// scheduled/in_progress orders would now be overdue (the phase-6 nightly job
+// converts those to `missed`), and viewing today always yields overdue:0
+// since due_date == tenant-today by construction.
+func registerStaffDashboard(api huma.API, q *db.Queries) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getStaffDashboard",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/staff/dashboard",
+		Summary:     "Per-object statuses and totals for a day",
+		Tags:        []string{"staff"},
+	}, func(ctx context.Context, in *dashboardInput) (*dashboardOutput, error) {
+		p, ok := auth.PrincipalFrom(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		tenantToday, err := TenantToday(ctx, q, p.TenantID)
+		if err != nil {
+			return nil, fmt.Errorf("computing tenant-local today for tenant %s: %w", p.TenantID, err)
+		}
+		queryDate := tenantToday
+		if in.Date != "" {
+			d, err := time.Parse(dateLayout, in.Date)
+			if err != nil {
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-date", "date must be YYYY-MM-DD")
+			}
+			queryDate = pgtype.Date{Time: d, Valid: true}
+		}
+
+		rows, err := q.ListDashboardOrders(ctx, db.ListDashboardOrdersParams{TenantID: p.TenantID, DueDate: queryDate})
+		if err != nil {
+			return nil, fmt.Errorf("listing dashboard orders for tenant %s: %w", p.TenantID, err)
+		}
+
+		out := &dashboardOutput{}
+		out.Body.Date = queryDate.Time.Format(dateLayout)
+		out.Body.Objects = make([]dashboardObjectView, 0, len(rows))
+		for _, r := range rows {
+			switch r.Status {
+			case db.WorkOrderStatusDone:
+				out.Body.Totals.Done++
+			case db.WorkOrderStatusInProgress:
+				out.Body.Totals.InProgress++
+			}
+			if (r.Status == db.WorkOrderStatusScheduled || r.Status == db.WorkOrderStatusInProgress) && r.DueDate.Time.Before(tenantToday.Time) {
+				out.Body.Totals.Overdue++
+			}
+			out.Body.Objects = append(out.Body.Objects, dashboardObjectView{
+				ObjectID: r.ObjectID, ObjectName: r.ObjectName, Address: r.Address, Lat: r.Lat, Lon: r.Lon,
+				OrderID: r.OrderID, Status: string(r.Status), WorkerName: r.WorkerName,
+				LastActivityAt: tptr(r.LastActivityAt), LastFinishedAt: tptr(r.LastFinishedAt),
+				PhotoCount: r.PhotoCount,
+			})
+		}
+		out.Body.Totals.Total = len(rows)
+		return out, nil
 	})
 }

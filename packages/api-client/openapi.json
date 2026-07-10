@@ -179,6 +179,120 @@
         ],
         "type": "object"
       },
+      "DashboardObjectView": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "last_activity_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "lat": {
+            "format": "double",
+            "type": "number"
+          },
+          "lon": {
+            "format": "double",
+            "type": "number"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "object_name": {
+            "type": "string"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "photo_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "worker_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "object_id",
+          "object_name",
+          "order_id",
+          "status",
+          "photo_count"
+        ],
+        "type": "object"
+      },
+      "DashboardOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/DashboardOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardObjectView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "totals": {
+            "$ref": "#/components/schemas/DashboardTotals"
+          }
+        },
+        "required": [
+          "date",
+          "totals",
+          "objects"
+        ],
+        "type": "object"
+      },
+      "DashboardTotals": {
+        "additionalProperties": false,
+        "properties": {
+          "done": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "in_progress": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "overdue": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "done",
+          "in_progress",
+          "overdue",
+          "total"
+        ],
+        "type": "object"
+      },
       "ErrorDetail": {
         "additionalProperties": false,
         "properties": {
@@ -1875,6 +1989,49 @@
         "summary": "Claim a worker invite",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/v1/staff/dashboard": {
+      "get": {
+        "operationId": "getStaffDashboard",
+        "parameters": [
+          {
+            "description": "YYYY-MM-DD; defaults to tenant-local today",
+            "explode": false,
+            "in": "query",
+            "name": "date",
+            "schema": {
+              "description": "YYYY-MM-DD; defaults to tenant-local today",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Per-object statuses and totals for a day",
+        "tags": [
+          "staff"
         ]
       }
     },

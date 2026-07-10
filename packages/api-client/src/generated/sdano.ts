@@ -88,6 +88,36 @@ export interface CreateWorkerInputBody {
   display_name: string;
 }
 
+export interface DashboardObjectView {
+  address?: string;
+  last_activity_at?: string;
+  last_finished_at?: string;
+  lat?: number;
+  lon?: number;
+  object_id: string;
+  object_name: string;
+  order_id: string;
+  photo_count: number;
+  status: string;
+  worker_name?: string;
+}
+
+export interface DashboardTotals {
+  done: number;
+  in_progress: number;
+  overdue: number;
+  total: number;
+}
+
+export interface DashboardOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  date: string;
+  /** @nullable */
+  objects: DashboardObjectView[] | null;
+  totals: DashboardTotals;
+}
+
 export interface ErrorDetail {
   /** Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
   location?: string;
@@ -516,6 +546,13 @@ export interface TokenPairOutputBody {
   refresh_token: string;
 }
 
+export type GetStaffDashboardParams = {
+/**
+ * YYYY-MM-DD; defaults to tenant-local today
+ */
+date?: string;
+};
+
 export type ListStaffObjectExecutionsParams = {
 cursor?: string;
 limit?: number;
@@ -734,6 +771,63 @@ export const authWorkerClaim = async (claimInputBody: NonReadonly<ClaimInputBody
 
   const data: authWorkerClaimResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as authWorkerClaimResponse
+}
+
+
+
+export type getStaffDashboardResponse200 = {
+  data: DashboardOutputBody
+  status: 200
+}
+
+export type getStaffDashboardResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getStaffDashboardResponseSuccess = (getStaffDashboardResponse200) & {
+  headers: Headers;
+};
+export type getStaffDashboardResponseError = (getStaffDashboardResponseDefault) & {
+  headers: Headers;
+};
+
+export type getStaffDashboardResponse = (getStaffDashboardResponseSuccess | getStaffDashboardResponseError)
+
+export const getGetStaffDashboardUrl = (params?: GetStaffDashboardParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/staff/dashboard?${stringifiedParams}` : `/api/v1/staff/dashboard`
+}
+
+/**
+ * @summary Per-object statuses and totals for a day
+ */
+export const getStaffDashboard = async (params?: GetStaffDashboardParams, options?: RequestInit): Promise<getStaffDashboardResponse> => {
+
+  const res = await fetch(getGetStaffDashboardUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getStaffDashboardResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getStaffDashboardResponse
 }
 
 

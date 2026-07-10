@@ -285,3 +285,42 @@ func bearerAs2(t *testing.T, tenant, user uuid.UUID, role auth.Role) string {
 	}
 	return "Bearer " + tok
 }
+
+func TestStaffDashboard(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, worker := uuid.New(), uuid.New()
+	tmpl, version := uuid.New(), uuid.New()
+	obj1, obj2 := uuid.New(), uuid.New()
+	order1, order2 := uuid.New(), uuid.New()
+	must := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	must(`INSERT INTO tenant (id,name) VALUES ($1,'Acme')`, tenant)
+	must(`INSERT INTO app_user (id,tenant_id,role,display_name) VALUES ($1,$2,'worker','Alexey')`, worker, tenant)
+	must(`INSERT INTO object (id,tenant_id,name) VALUES ($1,$2,'Done stop')`, obj1, tenant)
+	must(`INSERT INTO object (id,tenant_id,name) VALUES ($1,$2,'Pending stop')`, obj2, tenant)
+	must(`INSERT INTO checklist_template (id,tenant_id,name) VALUES ($1,$2,'T')`, tmpl, tenant)
+	must(`INSERT INTO checklist_template_version (id,template_id,version) VALUES ($1,$2,1)`, version, tmpl)
+	must(`INSERT INTO work_order (id,tenant_id,object_id,version_id,assignee_id,due_date,status) VALUES ($1,$2,$3,$4,$5,current_date,'done')`, order1, tenant, obj1, version, worker)
+	must(`INSERT INTO work_order (id,tenant_id,object_id,version_id,assignee_id,due_date) VALUES ($1,$2,$3,$4,$5,current_date)`, order2, tenant, obj2, version, worker)
+	must(`INSERT INTO work_execution (id,tenant_id,work_order_id,worker_id,device_finished_at,finished_at) VALUES ($1,$2,$3,$4,now(),now())`, uuid.New(), tenant, order1, worker)
+
+	router, _ := app.New(config.Config{JWTSecret: testSecret}, app.Deps{Pool: pool})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/staff/dashboard", nil)
+	req.Header.Set("Authorization", bearerAs2(t, tenant, uuid.New(), auth.RoleAdmin))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard: got %d; body %s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`"done":1`, `"total":2`, "Done stop", "Pending stop", "Alexey"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard missing %q; body: %s", want, body)
+		}
+	}
+}
