@@ -7,7 +7,7 @@ Base path: `/api/v1`.
 ## Conventions
 
 - **IDs:** UUIDs. Mobile-created resources send their own `id` (client-generated, idempotent upsert on the server).
-- **Errors:** RFC 7807 `application/problem+json` (huma's default). Stable machine-readable `type` slugs, including: `invite-code-invalid`, `tenant-archived`, `tenant-suspended`, `rate-limited`, `work-order-not-assigned` (403), `execution-id-conflict` (409), `execution-item-conflict` (409), `qr-token-taken` (409), `invalid-checklist-item` (422), `execution-not-found` (404), `photo-not-found` (404), `photo-not-uploaded` (409), `photo-id-conflict` (409), `photo-already-uploaded` (409), `unsupported-content-type` (422), `qr-not-found` (404), `object-not-found` (404), `work-order-not-found` (404), `worker-not-found` (404), `invalid-cursor` (422), `invalid-reference` (422), `invalid-date` (422), `invalid-status` (422), `invalid-active` (422).
+- **Errors:** RFC 7807 `application/problem+json` (huma's default). Stable machine-readable `type` slugs, including: `invite-code-invalid`, `tenant-archived`, `tenant-suspended`, `rate-limited`, `work-order-not-assigned` (403), `execution-id-conflict` (409), `execution-item-conflict` (409), `qr-token-taken` (409), `invalid-checklist-item` (422), `execution-not-found` (404), `photo-not-found` (404), `photo-not-uploaded` (409), `photo-id-conflict` (409), `photo-already-uploaded` (409), `unsupported-content-type` (422), `qr-not-found` (404), `object-not-found` (404), `work-order-not-found` (404), `worker-not-found` (404), `report-not-found` (404), `invalid-cursor` (422), `invalid-reference` (422), `invalid-date` (422), `invalid-period` (422), `invalid-status` (422), `invalid-active` (422).
 - **Timestamps:** RFC 3339 with offset. Mobile sends device-clock times explicitly where the field name says so.
 - **Idempotency:** all mobile POSTs are upserts keyed by client UUID. Replaying a request is always safe and returns 200 with the current state (not 409).
 - **Pagination:** cursor-based, `?cursor=...&limit=...`, response carries `next_cursor`. Only where lists can grow (executions, issues, photos).
@@ -143,11 +143,14 @@ Reads of photo bytes also go through presigned URLs — the API serves JSON only
 
 ### Reports
 ```
-POST /staff/reports        { contract_id, period_from, period_to } → 202 { report_id, status: "generating" }
-GET  /staff/reports/{id}   → { status: "generating" | "ready" | "failed", download_url? }
-GET  /staff/reports        # history
+POST /staff/reports        { contract_id?, period_from, period_to } → 202 { report_id, status: "generating" }
+GET  /staff/reports/{id}   → { id, contract_id?, status, period_from, period_to, created_at,
+                                failure_reason?, download_url?, url_expires_at? }
+GET  /staff/reports        → { reports: [ same shape as above, minus failure_reason/download_url/url_expires_at ] }
 ```
-Generation is async (headless Chrome can take tens of seconds for a month of photos): 202 + polling. The admin UI shows "PDF will be ready in 1–2 minutes" and polls; download_url is a presigned GET.
+`period_from`/`period_to` are `YYYY-MM-DD`; `contract_id` is optional (a report can cover every object). Generation is async — the POST only inserts the report row (the render queue itself, docs/06/09) and returns immediately; the render worker picks it up and can take tens of seconds for a month of photos. The admin UI shows "PDF will be ready in 1–2 minutes" and polls `GET .../{id}`. `download_url` is a 5-minute presigned GET, present only once `status` is `ready` **and** the row has an `s3_key` — never an empty string while generating or after a failure. `failure_reason` is present only when `status` is `failed`. The list endpoint never presigns per row (it stays a single cheap query even for a long history) — fetch the single-report GET to get a fresh `download_url`.
+
+Validation: either date failing to parse as `YYYY-MM-DD` → `422 invalid-date`; `period_from` after `period_to`, or a span over 92 days → `422 invalid-period`; a `contract_id` that doesn't belong to the caller's tenant → `422 invalid-reference`; an unknown report id → `404 report-not-found`. POST carries the suspended-tenant write exception (see Cross-cutting below): a suspended tenant may still generate reports for past periods.
 
 ## Slice 2 additions (sketched now so the shape is stable)
 

@@ -81,6 +81,23 @@ export interface ConfirmInputBody {
   taken_at?: string;
 }
 
+export interface CreateReportInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  contract_id?: string;
+  /** YYYY-MM-DD */
+  period_from: string;
+  /** YYYY-MM-DD */
+  period_to: string;
+}
+
+export interface CreateReportOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  report_id: string;
+  status: string;
+}
+
 export interface CreateWorkerInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -274,6 +291,27 @@ export interface ListOutputBody {
   readonly $schema?: string;
   /** @nullable */
   objects: Object[] | null;
+}
+
+export interface ReportView {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  contract_id?: string;
+  created_at: string;
+  download_url?: string;
+  failure_reason?: string;
+  id: string;
+  period_from: string;
+  period_to: string;
+  status: string;
+  url_expires_at?: string;
+}
+
+export interface ListReportsOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  reports: ReportView[] | null;
 }
 
 export interface StaffWorkerView {
@@ -1203,6 +1241,156 @@ export const getStaffPhotoURL = async (id: string, options?: RequestInit): Promi
 
   const data: getStaffPhotoURLResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as getStaffPhotoURLResponse
+}
+
+
+
+export type listStaffReportsResponse200 = {
+  data: ListReportsOutputBody
+  status: 200
+}
+
+export type listStaffReportsResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listStaffReportsResponseSuccess = (listStaffReportsResponse200) & {
+  headers: Headers;
+};
+export type listStaffReportsResponseError = (listStaffReportsResponseDefault) & {
+  headers: Headers;
+};
+
+export type listStaffReportsResponse = (listStaffReportsResponseSuccess | listStaffReportsResponseError)
+
+export const getListStaffReportsUrl = () => {
+
+
+
+
+  return `/api/v1/staff/reports`
+}
+
+/**
+ * @summary List generated reports
+ */
+export const listStaffReports = async ( options?: RequestInit): Promise<listStaffReportsResponse> => {
+
+  const res = await fetch(getListStaffReportsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listStaffReportsResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listStaffReportsResponse
+}
+
+
+
+export type createStaffReportResponse202 = {
+  data: CreateReportOutputBody
+  status: 202
+}
+
+export type createStaffReportResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 202>
+}
+
+export type createStaffReportResponseSuccess = (createStaffReportResponse202) & {
+  headers: Headers;
+};
+export type createStaffReportResponseError = (createStaffReportResponseDefault) & {
+  headers: Headers;
+};
+
+export type createStaffReportResponse = (createStaffReportResponseSuccess | createStaffReportResponseError)
+
+export const getCreateStaffReportUrl = () => {
+
+
+
+
+  return `/api/v1/staff/reports`
+}
+
+/**
+ * @summary Enqueue a report for async generation
+ */
+export const createStaffReport = async (createReportInputBody: NonReadonly<CreateReportInputBody>, options?: RequestInit): Promise<createStaffReportResponse> => {
+
+  const res = await fetch(getCreateStaffReportUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createReportInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createStaffReportResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createStaffReportResponse
+}
+
+
+
+export type getStaffReportResponse200 = {
+  data: ReportView
+  status: 200
+}
+
+export type getStaffReportResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getStaffReportResponseSuccess = (getStaffReportResponse200) & {
+  headers: Headers;
+};
+export type getStaffReportResponseError = (getStaffReportResponseDefault) & {
+  headers: Headers;
+};
+
+export type getStaffReportResponse = (getStaffReportResponseSuccess | getStaffReportResponseError)
+
+export const getGetStaffReportUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/staff/reports/${id}`
+}
+
+/**
+ * @summary Poll a report's generation status
+ */
+export const getStaffReport = async (id: string, options?: RequestInit): Promise<getStaffReportResponse> => {
+
+  const res = await fetch(getGetStaffReportUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getStaffReportResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getStaffReportResponse
 }
 
 
