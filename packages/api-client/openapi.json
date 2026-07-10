@@ -2079,6 +2079,27 @@
     "/api/v1/staff/objects": {
       "get": {
         "operationId": "listStaffObjects",
+        "parameters": [
+          {
+            "description": "true or false; omit for no filter",
+            "explode": false,
+            "in": "query",
+            "name": "active",
+            "schema": {
+              "description": "true or false; omit for no filter",
+              "type": "string"
+            }
+          },
+          {
+            "explode": false,
+            "in": "query",
+            "name": "contract_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -2101,7 +2122,7 @@
             "description": "Error"
           }
         },
-        "summary": "List active objects",
+        "summary": "List objects, optionally filtered by contract/active",
         "tags": [
           "staff"
         ]

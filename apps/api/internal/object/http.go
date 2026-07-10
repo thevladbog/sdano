@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"sdano.app/api/internal/auth"
@@ -39,19 +41,45 @@ type listOutput struct {
 	}
 }
 
+// listObjectsInput's filters are both optional: unfiltered returns every
+// object in the tenant (active and inactive alike) — callers that want only
+// live objects must say so explicitly with ?active=true. huma v2 panics on
+// pointer-typed form/header/path/query fields ("pointers are not supported"),
+// so — like Date/ObjectID/AssigneeID/Status in workorder's listOrdersInput —
+// these are plain strings, empty meaning "not sent", parsed by hand below.
+type listObjectsInput struct {
+	Active     string `query:"active" doc:"true or false; omit for no filter"`
+	ContractID string `query:"contract_id" format:"uuid"`
+}
+
 func Register(api huma.API, queries *db.Queries) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listStaffObjects",
 		Method:      http.MethodGet,
 		Path:        "/api/v1/staff/objects",
-		Summary:     "List active objects",
+		Summary:     "List objects, optionally filtered by contract/active",
 		Tags:        []string{"staff"},
-	}, func(ctx context.Context, _ *struct{}) (*listOutput, error) {
+	}, func(ctx context.Context, in *listObjectsInput) (*listOutput, error) {
 		principal, ok := auth.PrincipalFrom(ctx)
 		if !ok {
 			return nil, huma.Error401Unauthorized("authentication required")
 		}
-		rows, err := queries.ListObjects(ctx, principal.TenantID)
+		params := db.ListObjectsParams{TenantID: principal.TenantID}
+		if in.Active != "" {
+			active, err := strconv.ParseBool(in.Active)
+			if err != nil {
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-active", "active must be true or false")
+			}
+			params.Active = &active
+		}
+		if in.ContractID != "" {
+			cid, err := uuid.Parse(in.ContractID)
+			if err != nil {
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-reference", "invalid contract_id")
+			}
+			params.ContractID = uuid.NullUUID{UUID: cid, Valid: true}
+		}
+		rows, err := queries.ListObjects(ctx, params)
 		if err != nil {
 			return nil, fmt.Errorf("listing objects for tenant %s: %w", principal.TenantID, err)
 		}
@@ -127,6 +155,35 @@ func nullUUID(id *uuid.UUID) uuid.NullUUID {
 	return uuid.NullUUID{UUID: *id, Valid: true}
 }
 
+// validateContractRef checks that a caller-supplied contract_id belongs to
+// this tenant, returning a 422 invalid-reference problem when it does not —
+// covering both a cross-tenant contract and one that doesn't exist at all.
+// A nil contractID (field omitted) is not validated.
+func validateContractRef(ctx context.Context, queries *db.Queries, tenantID uuid.UUID, contractID *uuid.UUID) error {
+	if contractID == nil {
+		return nil
+	}
+	n, err := queries.CountContractsInTenant(ctx, db.CountContractsInTenantParams{TenantID: tenantID, Ids: []uuid.UUID{*contractID}})
+	if err != nil {
+		return fmt.Errorf("validating contract %s: %w", *contractID, err)
+	}
+	if n != 1 {
+		return problem(http.StatusUnprocessableEntity, "invalid-reference", "contract does not belong to this tenant")
+	}
+	return nil
+}
+
+// qrConflict maps a unique_violation on object.qr_token to a 409 problem; it
+// returns nil for any other error (including a nil err), letting the caller
+// fall through to its own error handling.
+func qrConflict(err error) *huma.ErrorModel {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return problem(http.StatusConflict, "qr-token-taken", "this QR token is already assigned to another object")
+	}
+	return nil
+}
+
 func registerStaffObjectWrites(api huma.API, queries *db.Queries) {
 	huma.Register(api, huma.Operation{
 		OperationID:   "createStaffObject",
@@ -140,6 +197,9 @@ func registerStaffObjectWrites(api huma.API, queries *db.Queries) {
 		if !ok {
 			return nil, huma.Error401Unauthorized("authentication required")
 		}
+		if err := validateContractRef(ctx, queries, principal.TenantID, in.Body.ContractID); err != nil {
+			return nil, err
+		}
 		row, err := queries.InsertObject(ctx, db.InsertObjectParams{
 			TenantID:   principal.TenantID,
 			Name:       in.Body.Name,
@@ -150,6 +210,9 @@ func registerStaffObjectWrites(api huma.API, queries *db.Queries) {
 			QrToken:    in.Body.QRToken,
 			ContractID: nullUUID(in.Body.ContractID),
 		})
+		if p := qrConflict(err); p != nil {
+			return nil, p
+		}
 		if err != nil {
 			return nil, fmt.Errorf("inserting object for tenant %s: %w", principal.TenantID, err)
 		}
@@ -174,6 +237,9 @@ func registerStaffObjectWrites(api huma.API, queries *db.Queries) {
 		if err != nil {
 			return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid object id")
 		}
+		if err := validateContractRef(ctx, queries, principal.TenantID, in.Body.ContractID); err != nil {
+			return nil, err
+		}
 		row, err := queries.UpdateObject(ctx, db.UpdateObjectParams{
 			Name:       in.Body.Name,
 			Address:    in.Body.Address,
@@ -188,6 +254,9 @@ func registerStaffObjectWrites(api huma.API, queries *db.Queries) {
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, problem(http.StatusNotFound, "object-not-found", "no object with this id")
+		}
+		if p := qrConflict(err); p != nil {
+			return nil, p
 		}
 		if err != nil {
 			return nil, fmt.Errorf("updating object %s: %w", id, err)

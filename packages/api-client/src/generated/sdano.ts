@@ -553,6 +553,14 @@ export type GetStaffDashboardParams = {
 date?: string;
 };
 
+export type ListStaffObjectsParams = {
+/**
+ * true or false; omit for no filter
+ */
+active?: string;
+contract_id?: string;
+};
+
 export type ListStaffObjectExecutionsParams = {
 cursor?: string;
 limit?: number;
@@ -901,20 +909,27 @@ export type listStaffObjectsResponseError = (listStaffObjectsResponseDefault) & 
 
 export type listStaffObjectsResponse = (listStaffObjectsResponseSuccess | listStaffObjectsResponseError)
 
-export const getListStaffObjectsUrl = () => {
+export const getListStaffObjectsUrl = (params?: ListStaffObjectsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/v1/staff/objects`
+  return stringifiedParams.length > 0 ? `/api/v1/staff/objects?${stringifiedParams}` : `/api/v1/staff/objects`
 }
 
 /**
- * @summary List active objects
+ * @summary List objects, optionally filtered by contract/active
  */
-export const listStaffObjects = async ( options?: RequestInit): Promise<listStaffObjectsResponse> => {
+export const listStaffObjects = async (params?: ListStaffObjectsParams, options?: RequestInit): Promise<listStaffObjectsResponse> => {
 
-  const res = await fetch(getListStaffObjectsUrl(),
+  const res = await fetch(getListStaffObjectsUrl(params),
   {
     ...options,
     method: 'GET'

@@ -29,6 +29,22 @@ func (q *Queries) CountActiveWorkersInTenant(ctx context.Context, arg CountActiv
 	return count, err
 }
 
+const countContractsInTenant = `-- name: CountContractsInTenant :one
+SELECT count(*) FROM contract WHERE tenant_id = $1 AND id = ANY($2::uuid[])
+`
+
+type CountContractsInTenantParams struct {
+	TenantID uuid.UUID
+	Ids      []uuid.UUID
+}
+
+func (q *Queries) CountContractsInTenant(ctx context.Context, arg CountContractsInTenantParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countContractsInTenant, arg.TenantID, arg.Ids)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countObjectsInTenant = `-- name: CountObjectsInTenant :one
 SELECT count(*) FROM object WHERE tenant_id = $1 AND id = ANY($2::uuid[])
 `

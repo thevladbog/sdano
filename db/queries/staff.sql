@@ -74,6 +74,9 @@ WHERE t.tenant_id = $1 AND v.id = ANY(sqlc.arg(ids)::uuid[]);
 SELECT count(*) FROM app_user
 WHERE tenant_id = $1 AND role = 'worker' AND is_active AND id = ANY(sqlc.arg(ids)::uuid[]);
 
+-- name: CountContractsInTenant :one
+SELECT count(*) FROM contract WHERE tenant_id = $1 AND id = ANY(sqlc.arg(ids)::uuid[]);
+
 -- === workers & invites =====================================================
 
 -- name: ListWorkers :many
