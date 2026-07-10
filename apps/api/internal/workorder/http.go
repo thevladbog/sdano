@@ -259,6 +259,9 @@ type orderCreateBody struct {
 // empty or >100-item array (422) before the handler ever runs (see
 // docs/features/request-inputs.md: "All doc & validation tags are allowed
 // on the body"), so no separate length check is needed in the handler.
+// A literal JSON `null` body, however, satisfies the generated
+// ["array","null"] schema and skips minItems entirely, so the handler
+// still guards against a nil Body explicitly (see the nil check below).
 type bulkCreateOrdersInput struct {
 	Body []orderCreateBody `minItems:"1" maxItems:"100"`
 }
@@ -435,6 +438,10 @@ func registerStaffOrders(api huma.API, pool *pgxpool.Pool) {
 		principal, ok := auth.PrincipalFrom(ctx)
 		if !ok {
 			return nil, huma.Error401Unauthorized("authentication required")
+		}
+
+		if in.Body == nil {
+			return nil, problem(http.StatusUnprocessableEntity, "invalid-reference", "request body must be a non-empty array of orders")
 		}
 
 		parsed, objectIDs, versionIDs, assigneeIDs, perr := parseOrderBatch(in.Body)

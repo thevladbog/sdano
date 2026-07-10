@@ -187,6 +187,7 @@ func UpsertExecution(ctx context.Context, pool *pgxpool.Pool, tenantID, workerID
 	if owner.DeviceFinishedAt.Valid {
 		status = db.WorkOrderStatusDone
 	}
+	// Runs under the FOR UPDATE lock taken by GetWorkOrderForWorker at tx start.
 	if err := qtx.SetWorkOrderStatus(ctx, db.SetWorkOrderStatusParams{ID: in.WorkOrderID, TenantID: tenantID, Status: status}); err != nil {
 		return fmt.Errorf("set order status: %w", err)
 	}

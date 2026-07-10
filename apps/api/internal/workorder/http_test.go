@@ -229,6 +229,16 @@ func TestStaffWorkOrdersBulkCreateListPatch(t *testing.T) {
 	if after := countOrders(t, pool, tenant); after != before {
 		t.Errorf("failed batch must create nothing: before=%d after=%d", before, after)
 	}
+	// A literal JSON `null` body satisfies the generated ["array","null"]
+	// schema and bypasses minItems, so the handler must reject it explicitly
+	// instead of silently 201-ing with created:0.
+	beforeNull := countOrders(t, pool, tenant)
+	if rec = do(http.MethodPost, "/api/v1/staff/work-orders", "null"); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("null body: got %d; body %s", rec.Code, rec.Body)
+	}
+	if after := countOrders(t, pool, tenant); after != beforeNull {
+		t.Errorf("null body must create nothing: before=%d after=%d", beforeNull, after)
+	}
 	// List by date.
 	rec = do(http.MethodGet, "/api/v1/staff/work-orders?date=2026-07-13", "")
 	if rec.Code != http.StatusOK || strings.Count(rec.Body.String(), `"object_id"`) != 1 {
