@@ -7,7 +7,7 @@ Base path: `/api/v1`.
 ## Conventions
 
 - **IDs:** UUIDs. Mobile-created resources send their own `id` (client-generated, idempotent upsert on the server).
-- **Errors:** RFC 7807 `application/problem+json` (huma's default). Stable machine-readable `type` slugs, e.g. `invite-code-invalid`, `work-order-not-assigned`.
+- **Errors:** RFC 7807 `application/problem+json` (huma's default). Stable machine-readable `type` slugs, including: `invite-code-invalid`, `tenant-archived`, `tenant-suspended`, `rate-limited`, `work-order-not-assigned` (403), `execution-id-conflict` (409), `execution-item-conflict` (409), `invalid-checklist-item` (422), `execution-not-found` (404), `photo-not-found` (404), `photo-not-uploaded` (409), `photo-id-conflict` (409), `photo-already-uploaded` (409), `unsupported-content-type` (422), `qr-not-found` (404).
 - **Timestamps:** RFC 3339 with offset. Mobile sends device-clock times explicitly where the field name says so.
 - **Idempotency:** all mobile POSTs are upserts keyed by client UUID. Replaying a request is always safe and returns 200 with the current state (not 409).
 - **Pagination:** cursor-based, `?cursor=...&limit=...`, response carries `next_cursor`. Only where lists can grow (executions, issues, photos).
@@ -68,12 +68,12 @@ PUT /worker/executions/{id}
 {
   "work_order_id": "...",
   "started_at": "...",            // device clock
-  "finished_at": "...",           // device clock; null while in progress
+  "device_finished_at": "...",    // device clock at completion; null while in progress
   "items": [ { "id", "template_item_id", "checked", "checked_at" } ],
   "note": null
 }
 ```
-Full-state upsert: the client always sends the complete current state of the execution; the server replaces. This makes the offline queue trivial — no diffs, no ordering hazards between item-level updates. Response: 200 with the server view (including any photos it knows about).
+Full-state upsert: the client always sends the complete current state of the execution; the server replaces. This makes the offline queue trivial — no diffs, no ordering hazards between item-level updates. Response: 200 with the server view (including any photos it knows about). The server stamps `finished_at` (server receipt time) once when `device_finished_at` first appears; both are kept (docs/06 decision 2).
 
 ### Photos — two-phase upload
 ```
@@ -164,5 +164,6 @@ The `execution_id` on a resolution is the loop link: "fixed during the planned v
 - **Rate limiting:** two-tier. Pre-auth, per real client IP (resolved from `X-Forwarded-For` behind the trusted proxy): strict on `/api/v1/auth/*`, an isolated class for `/healthz`, a generous DoS ceiling elsewhere. Post-auth, per verified principal — generous for workers (photo bursts are legitimate). Over-budget requests get `429` with the `rate-limited` problem type. Budgets are tunable, not contract.
 - **Versioning:** `/v1` in the path; additive changes preferred; breaking changes = new version (unlikely before the OSS pivot).
 - **Clock skew:** the server never rejects device timestamps for being "in the past"; it stores both device and server times (see data model, `device_finished_at`).
+- **"Today" is UTC, not tenant-local.** `due_date` and the server's notion of "today" (for `/worker/today` and QR order resolution) are the **UTC calendar date**. Tenant-timezone-aware "today" is deferred to phase 5 (staff scheduling); until bulk order creation exists, orders are created manually, so this is a known, accepted limitation.
 - **CORS:** admin origin only; the mobile app doesn't need CORS.
 - **OpenAPI artifacts:** CI publishes the generated spec; orval runs against it to regenerate `packages/api-client` — a PR fails if generated clients drift from committed ones.

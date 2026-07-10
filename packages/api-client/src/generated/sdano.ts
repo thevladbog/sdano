@@ -32,6 +32,19 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
     : T[P];
 } : DistributeReadOnlyOverUnions<T>;
 
+export interface ChecklistItem {
+  id: string;
+  position: number;
+  requires_photo: boolean;
+  title: string;
+}
+
+export interface Checklist {
+  /** @nullable */
+  items: ChecklistItem[] | null;
+  version_id: string;
+}
+
 export interface ClaimInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -50,6 +63,14 @@ export interface ClaimOutputBody {
   readonly $schema?: string;
   device_token: string;
   worker: WorkerView;
+}
+
+export interface ConfirmInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  lat?: number;
+  lon?: number;
+  taken_at?: string;
 }
 
 export interface ErrorDetail {
@@ -79,6 +100,64 @@ export interface ErrorModel {
   title?: string;
   /** A URI reference to human-readable documentation for the error. */
   type?: string;
+}
+
+export interface ExecutionItemBody {
+  checked: boolean;
+  checked_at?: string;
+  id: string;
+  template_item_id: string;
+}
+
+export interface ExecutionItemView {
+  checked: boolean;
+  /** @nullable */
+  checked_at: string | null;
+  id: string;
+  template_item_id: string;
+}
+
+export interface ExecutionPhotoView {
+  id: string;
+  kind: string;
+  /** @nullable */
+  lat: number | null;
+  /** @nullable */
+  lon: number | null;
+  /** @nullable */
+  taken_at: string | null;
+  /** @nullable */
+  uploaded_at: string | null;
+}
+
+export interface ExecutionUpsertInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  device_finished_at?: string;
+  /** @nullable */
+  items: ExecutionItemBody[] | null;
+  note?: string;
+  started_at?: string;
+  work_order_id: string;
+}
+
+export interface ExecutionView {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  device_finished_at: string | null;
+  /** @nullable */
+  finished_at: string | null;
+  id: string;
+  /** @nullable */
+  items: ExecutionItemView[] | null;
+  /** @nullable */
+  note: string | null;
+  /** @nullable */
+  photos: ExecutionPhotoView[] | null;
+  /** @nullable */
+  started_at: string | null;
+  work_order_id: string;
 }
 
 export interface HealthOutputBody {
@@ -142,10 +221,110 @@ export interface LogoutInputBody {
   refresh_token: string;
 }
 
+export interface PhotoView {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  id: string;
+  kind: string;
+  lat?: number;
+  lon?: number;
+  taken_at?: string;
+  uploaded_at?: string;
+}
+
+export type PresignInputBodyKind = typeof PresignInputBodyKind[keyof typeof PresignInputBodyKind];
+
+
+export const PresignInputBodyKind = {
+  before: 'before',
+  after: 'after',
+  defect: 'defect',
+  resolution: 'resolution',
+} as const;
+
+export interface PresignInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  content_type: string;
+  execution_id: string;
+  id: string;
+  kind: PresignInputBodyKind;
+}
+
+export interface PresignOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expires_at: string;
+  s3_key: string;
+  upload_url: string;
+}
+
+export interface QrObject {
+  /** @nullable */
+  address: string | null;
+  id: string;
+  is_active: boolean;
+  /** @nullable */
+  kind: string | null;
+  /** @nullable */
+  lat: number | null;
+  /** @nullable */
+  lon: number | null;
+  name: string;
+  /** @nullable */
+  qr_token: string | null;
+}
+
+export interface QrTodayOrder {
+  due_date: string;
+  id: string;
+  object_id: string;
+  status: string;
+  version_id: string;
+}
+
+export interface QrOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  object: QrObject;
+  today_work_order?: QrTodayOrder;
+}
+
 export interface RefreshInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   refresh_token: string;
+}
+
+export interface TodayObject {
+  /** @nullable */
+  address: string | null;
+  id: string;
+  /** @nullable */
+  lat: number | null;
+  /** @nullable */
+  lon: number | null;
+  name: string;
+  /** @nullable */
+  qr_token: string | null;
+}
+
+export interface TodayOrder {
+  checklist: Checklist;
+  due_date: string;
+  id: string;
+  object_id: string;
+  status: string;
+}
+
+export interface TodayOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  generated_at: string;
+  /** @nullable */
+  objects: TodayObject[] | null;
+  /** @nullable */
+  work_orders: TodayOrder[] | null;
 }
 
 export interface TokenPairOutputBody {
@@ -408,6 +587,258 @@ export const listStaffObjects = async ( options?: RequestInit): Promise<listStaf
 
   const data: listStaffObjectsResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as listStaffObjectsResponse
+}
+
+
+
+export type upsertWorkerExecutionResponse200 = {
+  data: ExecutionView
+  status: 200
+}
+
+export type upsertWorkerExecutionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type upsertWorkerExecutionResponseSuccess = (upsertWorkerExecutionResponse200) & {
+  headers: Headers;
+};
+export type upsertWorkerExecutionResponseError = (upsertWorkerExecutionResponseDefault) & {
+  headers: Headers;
+};
+
+export type upsertWorkerExecutionResponse = (upsertWorkerExecutionResponseSuccess | upsertWorkerExecutionResponseError)
+
+export const getUpsertWorkerExecutionUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/worker/executions/${id}`
+}
+
+/**
+ * @summary Idempotent full-state execution upsert
+ */
+export const upsertWorkerExecution = async (id: string,
+    executionUpsertInputBody: NonReadonly<ExecutionUpsertInputBody>, options?: RequestInit): Promise<upsertWorkerExecutionResponse> => {
+
+  const res = await fetch(getUpsertWorkerExecutionUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(executionUpsertInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: upsertWorkerExecutionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as upsertWorkerExecutionResponse
+}
+
+
+
+export type workerObjectByQRResponse200 = {
+  data: QrOutputBody
+  status: 200
+}
+
+export type workerObjectByQRResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type workerObjectByQRResponseSuccess = (workerObjectByQRResponse200) & {
+  headers: Headers;
+};
+export type workerObjectByQRResponseError = (workerObjectByQRResponseDefault) & {
+  headers: Headers;
+};
+
+export type workerObjectByQRResponse = (workerObjectByQRResponseSuccess | workerObjectByQRResponseError)
+
+export const getWorkerObjectByQRUrl = (qrToken: string,) => {
+
+
+
+
+  return `/api/v1/worker/objects/by-qr/${qrToken}`
+}
+
+/**
+ * @summary Resolve an object by its QR token
+ */
+export const workerObjectByQR = async (qrToken: string, options?: RequestInit): Promise<workerObjectByQRResponse> => {
+
+  const res = await fetch(getWorkerObjectByQRUrl(qrToken),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: workerObjectByQRResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as workerObjectByQRResponse
+}
+
+
+
+export type presignWorkerPhotoResponse200 = {
+  data: PresignOutputBody
+  status: 200
+}
+
+export type presignWorkerPhotoResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type presignWorkerPhotoResponseSuccess = (presignWorkerPhotoResponse200) & {
+  headers: Headers;
+};
+export type presignWorkerPhotoResponseError = (presignWorkerPhotoResponseDefault) & {
+  headers: Headers;
+};
+
+export type presignWorkerPhotoResponse = (presignWorkerPhotoResponseSuccess | presignWorkerPhotoResponseError)
+
+export const getPresignWorkerPhotoUrl = () => {
+
+
+
+
+  return `/api/v1/worker/photos/presign`
+}
+
+/**
+ * @summary Presign a direct-to-S3 photo upload
+ */
+export const presignWorkerPhoto = async (presignInputBody: NonReadonly<PresignInputBody>, options?: RequestInit): Promise<presignWorkerPhotoResponse> => {
+
+  const res = await fetch(getPresignWorkerPhotoUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(presignInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: presignWorkerPhotoResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as presignWorkerPhotoResponse
+}
+
+
+
+export type confirmWorkerPhotoResponse200 = {
+  data: PhotoView
+  status: 200
+}
+
+export type confirmWorkerPhotoResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type confirmWorkerPhotoResponseSuccess = (confirmWorkerPhotoResponse200) & {
+  headers: Headers;
+};
+export type confirmWorkerPhotoResponseError = (confirmWorkerPhotoResponseDefault) & {
+  headers: Headers;
+};
+
+export type confirmWorkerPhotoResponse = (confirmWorkerPhotoResponseSuccess | confirmWorkerPhotoResponseError)
+
+export const getConfirmWorkerPhotoUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/worker/photos/${id}/confirm`
+}
+
+/**
+ * @summary Confirm a photo uploaded to S3
+ */
+export const confirmWorkerPhoto = async (id: string,
+    confirmInputBody: NonReadonly<ConfirmInputBody>, options?: RequestInit): Promise<confirmWorkerPhotoResponse> => {
+
+  const res = await fetch(getConfirmWorkerPhotoUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(confirmInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: confirmWorkerPhotoResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as confirmWorkerPhotoResponse
+}
+
+
+
+export type workerTodayResponse200 = {
+  data: TodayOutputBody
+  status: 200
+}
+
+export type workerTodayResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type workerTodayResponseSuccess = (workerTodayResponse200) & {
+  headers: Headers;
+};
+export type workerTodayResponseError = (workerTodayResponseDefault) & {
+  headers: Headers;
+};
+
+export type workerTodayResponse = (workerTodayResponseSuccess | workerTodayResponseError)
+
+export const getWorkerTodayUrl = () => {
+
+
+
+
+  return `/api/v1/worker/today`
+}
+
+/**
+ * @summary Worker's working set for today
+ */
+export const workerToday = async ( options?: RequestInit): Promise<workerTodayResponse> => {
+
+  const res = await fetch(getWorkerTodayUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: workerTodayResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as workerTodayResponse
 }
 
 

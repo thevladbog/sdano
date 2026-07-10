@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
@@ -18,6 +19,8 @@ import (
 	"sdano.app/api/internal/config"
 	"sdano.app/api/internal/db"
 	"sdano.app/api/internal/object"
+	"sdano.app/api/internal/photo"
+	"sdano.app/api/internal/workorder"
 )
 
 // HealthCheck is a named dependency probe run by GET /healthz.
@@ -29,6 +32,7 @@ type HealthCheck struct {
 // Deps carries everything app.New wires into handlers. Grows with the app.
 type Deps struct {
 	Pool   *pgxpool.Pool
+	S3     *s3.Client
 	Checks []HealthCheck
 }
 
@@ -94,6 +98,8 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 	// unconditionally means `go run ./cmd/api openapi` (which builds the app
 	// with a nil pool) still emits listStaffObjects in the spec.
 	object.Register(api, queries)
+	workorder.Register(api, deps.Pool)
+	photo.Register(api, deps.Pool, photo.NewS3Store(deps.S3, cfg.S3Bucket))
 	auth.RegisterAuthRoutes(api, auth.NewService(deps.Pool, cfg.JWTSecret))
 
 	huma.Register(api, huma.Operation{
