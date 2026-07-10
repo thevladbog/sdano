@@ -1,0 +1,5 @@
+DROP INDEX IF EXISTS report_queue_idx;
+ALTER TABLE photo DROP COLUMN IF EXISTS created_at;
+ALTER TABLE report DROP COLUMN IF EXISTS render_attempts;
+ALTER TABLE report DROP COLUMN IF EXISTS created_at;
+ALTER TABLE tenant DROP COLUMN IF EXISTS suspended_at;

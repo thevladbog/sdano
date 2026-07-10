@@ -25,7 +25,8 @@ CREATE TABLE tenant (
     billed_until  date,          -- covered-by-payment horizon
     ops_note      text,          -- operator's free-form notes
     timezone      text NOT NULL DEFAULT 'UTC', -- Changed on 2026-07-10: tenant-local today, phase 5
-    created_at    timestamptz NOT NULL DEFAULT now()
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    suspended_at  timestamptz    -- Changed on 2026-07-10 (phase 6): precise carve-out boundary, set by ops suspend — docs/12
 );
 
 -- Operator actions audit (see 12-platform-ops.md)
@@ -210,6 +211,7 @@ CREATE TABLE photo (
     lat           double precision,
     lon           double precision,
     uploaded_at   timestamptz,                   -- NULL = presigned URL issued, upload not yet confirmed
+    created_at    timestamptz NOT NULL DEFAULT now(), -- Changed on 2026-07-10 (phase 6): orphan-GC ordering
     CHECK (num_nonnulls(execution_id, issue_id, resolution_id) = 1)
 );
 
@@ -225,7 +227,9 @@ CREATE TABLE report (
     failure_reason text,
     s3_key        text,                          -- the generated PDF
     generated_at  timestamptz,
-    generated_by  uuid REFERENCES app_user(id)
+    generated_by  uuid REFERENCES app_user(id),
+    created_at    timestamptz NOT NULL DEFAULT now(), -- Changed on 2026-07-10 (phase 6): report rows double as the render queue, ordered by this
+    render_attempts int NOT NULL DEFAULT 0        -- Changed on 2026-07-10 (phase 6): claim-with-retry-limit for the render worker
 );
 ```
 
