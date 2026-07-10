@@ -14,3 +14,6 @@ dist/
 apps/api/bin/
 coverage/
 .superpowers/
+
+# make report-preview output
+apps/api/report-preview.html
