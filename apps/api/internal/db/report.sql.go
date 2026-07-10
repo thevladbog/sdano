@@ -52,6 +52,19 @@ func (q *Queries) ClaimNextReport(ctx context.Context) (ClaimNextReportRow, erro
 	return i, err
 }
 
+const countGeneratingReports = `-- name: CountGeneratingReports :one
+SELECT count(*) FROM report WHERE tenant_id = $1 AND status = 'generating'
+`
+
+// The per-tenant pending cap's read (createStaffReport): how many of this
+// tenant's rows the single FIFO render worker still owes.
+func (q *Queries) CountGeneratingReports(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countGeneratingReports, tenantID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const failExhaustedReports = `-- name: FailExhaustedReports :execrows
 UPDATE report SET status = 'failed', failure_reason = 'render failed after 3 attempts (recovered by sweep)'
 WHERE status = 'generating' AND render_attempts >= 3
@@ -367,7 +380,7 @@ SELECT wo.object_id, e.id AS execution_id, wo.due_date,
        (SELECT count(*) FROM work_execution_item i WHERE i.execution_id = e.id) AS total_items
 FROM work_execution e
 JOIN work_order wo ON wo.id = e.work_order_id AND wo.tenant_id = e.tenant_id
-JOIN app_user u ON u.id = e.worker_id
+JOIN app_user u ON u.id = e.worker_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = $1
   AND wo.due_date BETWEEN $2 AND $3
   AND e.device_finished_at IS NOT NULL

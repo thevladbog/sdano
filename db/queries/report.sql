@@ -12,6 +12,11 @@ SELECT id, contract_id, period_from, period_to, status, generated_at, created_at
 FROM report WHERE tenant_id = $1
 ORDER BY created_at DESC LIMIT 100;
 
+-- name: CountGeneratingReports :one
+-- The per-tenant pending cap's read (createStaffReport): how many of this
+-- tenant's rows the single FIFO render worker still owes.
+SELECT count(*) FROM report WHERE tenant_id = $1 AND status = 'generating';
+
 -- name: ClaimNextReport :one
 -- Worker-internal: drains the queue across ALL tenants (single in-process
 -- worker). SKIP LOCKED lets a future second instance coexist safely. Caveat:
@@ -71,7 +76,7 @@ SELECT wo.object_id, e.id AS execution_id, wo.due_date,
        (SELECT count(*) FROM work_execution_item i WHERE i.execution_id = e.id) AS total_items
 FROM work_execution e
 JOIN work_order wo ON wo.id = e.work_order_id AND wo.tenant_id = e.tenant_id
-JOIN app_user u ON u.id = e.worker_id
+JOIN app_user u ON u.id = e.worker_id AND u.tenant_id = e.tenant_id
 WHERE e.tenant_id = sqlc.arg(tenant_id)
   AND wo.due_date BETWEEN sqlc.arg(period_from) AND sqlc.arg(period_to)
   AND e.device_finished_at IS NOT NULL

@@ -93,18 +93,56 @@ func (q *Queries) ListOrphanPhotos(ctx context.Context, createdAt pgtype.Timesta
 	return items, nil
 }
 
-const markOverdueOrdersMissed = `-- name: MarkOverdueOrdersMissed :execrows
-UPDATE work_order wo SET status = 'missed'
-FROM tenant t
-WHERE t.id = wo.tenant_id
-  AND wo.status = 'scheduled'
-  AND wo.due_date < (now() AT TIME ZONE t.timezone)::date
+const listTenantTimezones = `-- name: ListTenantTimezones :many
+SELECT id, timezone FROM tenant
 `
 
-// Tenant-timezone-aware: an order is missed once ITS tenant's local date has
-// moved past due_date. Cross-tenant by design (the scheduler serves all tenants).
-func (q *Queries) MarkOverdueOrdersMissed(ctx context.Context) (int64, error) {
-	result, err := q.db.Exec(ctx, markOverdueOrdersMissed)
+type ListTenantTimezonesRow struct {
+	ID       uuid.UUID
+	Timezone string
+}
+
+// Scheduler-internal: the per-tenant fan-out for missed-order marking. Every
+// status is included -- a suspended tenant's order history must stay honest
+// too (docs/12: suspension is read-only, not history-freezing).
+func (q *Queries) ListTenantTimezones(ctx context.Context) ([]ListTenantTimezonesRow, error) {
+	rows, err := q.db.Query(ctx, listTenantTimezones)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTenantTimezonesRow
+	for rows.Next() {
+		var i ListTenantTimezonesRow
+		if err := rows.Scan(&i.ID, &i.Timezone); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markTenantOverdueOrdersMissed = `-- name: MarkTenantOverdueOrdersMissed :execrows
+UPDATE work_order SET status = 'missed'
+WHERE tenant_id = $1
+  AND status = 'scheduled'
+  AND due_date < $2
+`
+
+type MarkTenantOverdueOrdersMissedParams struct {
+	TenantID    uuid.UUID
+	TenantToday pgtype.Date
+}
+
+// One tenant's slice of the hourly missed-marking sweep: an order is missed
+// once the tenant's local date has moved past due_date. tenant_today is
+// computed in Go (Scheduler.markOverdueMissed) so one tenant's invalid
+// timezone can never fail the sweep for every other tenant.
+func (q *Queries) MarkTenantOverdueOrdersMissed(ctx context.Context, arg MarkTenantOverdueOrdersMissedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markTenantOverdueOrdersMissed, arg.TenantID, arg.TenantToday)
 	if err != nil {
 		return 0, err
 	}
@@ -247,8 +285,9 @@ func (q *Queries) OpsSetTenantStatus(ctx context.Context, arg OpsSetTenantStatus
 	return err
 }
 
-const setTenantTimezone = `-- name: SetTenantTimezone :exec
-UPDATE tenant SET timezone = $2 WHERE id = $1
+const setTenantTimezone = `-- name: SetTenantTimezone :execrows
+UPDATE tenant SET timezone = $2
+WHERE id = $1 AND EXISTS (SELECT 1 FROM pg_catalog.pg_timezone_names WHERE name = $2)
 `
 
 type SetTenantTimezoneParams struct {
@@ -256,7 +295,14 @@ type SetTenantTimezoneParams struct {
 	Timezone string
 }
 
-func (q *Queries) SetTenantTimezone(ctx context.Context, arg SetTenantTimezoneParams) error {
-	_, err := q.db.Exec(ctx, setTenantTimezone, arg.ID, arg.Timezone)
-	return err
+// Guarded by pg_timezone_names: an unknown zone updates zero rows (the
+// caller treats 0 as an error), so an invalid string can never enter
+// tenant.timezone through this path and later trip the scheduler's or the
+// report renderer's zone lookup.
+func (q *Queries) SetTenantTimezone(ctx context.Context, arg SetTenantTimezoneParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setTenantTimezone, arg.ID, arg.Timezone)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

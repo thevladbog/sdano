@@ -397,7 +397,9 @@ func TestPhotoSuspensionGate(t *testing.T) {
 	}
 
 	// Legacy suspension (suspended_at cleared): blanket fallback allows the
-	// post-suspension execution's evidence too.
+	// post-suspension execution's evidence too — through BOTH gates, presign
+	// and confirm (evidenceSuspensionGate's !susp.Valid branch runs once per
+	// endpoint, so each needs its own proof).
 	if _, err := pool.Exec(ctx, `UPDATE tenant SET suspended_at=NULL WHERE id=$1`, tenant); err != nil {
 		t.Fatalf("clear suspended_at: %v", err)
 	}
@@ -405,6 +407,10 @@ func TestPhotoSuspensionGate(t *testing.T) {
 	presignBody3 := map[string]any{"id": photoID3.String(), "execution_id": execPost.String(), "kind": "before", "content_type": "image/jpeg"}
 	if p := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, presignBody3); p.Code != http.StatusOK {
 		t.Fatalf("legacy suspension blanket allow presign: got %d; body %s", p.Code, p.Body)
+	}
+	store.exists["tenants/"+tenant.String()+"/photos/"+photoID3.String()+".jpg"] = true
+	if c := api.Post("/api/v1/worker/photos/"+photoID3.String()+"/confirm", "Authorization: "+bearer, map[string]any{}); c.Code != http.StatusOK {
+		t.Fatalf("legacy suspension blanket allow confirm: got %d; body %s", c.Code, c.Body)
 	}
 }
 

@@ -107,7 +107,7 @@ func run(logger *slog.Logger) error {
 
 	// Hourly scheduler: tenant-timezone-aware missed-order marking + orphan
 	// photo GC (task 6). Shares the same store and signal ctx as the report
-	// worker above — both stop on the same shutdown signal.
+	// worker — both stop on the same shutdown signal.
 	scheduler := platform.NewScheduler(pool, store)
 	wg.Add(1)
 	go func() {
@@ -129,6 +129,11 @@ func run(logger *slog.Logger) error {
 
 	select {
 	case err := <-errCh:
+		// The server died on its own (no signal): cancel the background ctx
+		// explicitly, or wg.Wait would block forever on the still-running
+		// loops.
+		stop()
+		wg.Wait()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("http server: %w", err)
 		}

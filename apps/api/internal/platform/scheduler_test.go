@@ -238,6 +238,55 @@ func TestSchedulerRunOnceMarksMissedAndGCsOrphanPhotos(t *testing.T) {
 	}
 }
 
+// TestSchedulerInvalidTimezoneIsIsolatedPerTenant proves one tenant's
+// invalid timezone string can never break missed-marking for every other
+// tenant (the phase-6 review's blast-radius finding): the valid tenants'
+// orders are still marked, the invalid-timezone tenant falls back to a UTC
+// calendar with a logged warning, and RunOnce reports no error.
+func TestSchedulerInvalidTimezoneIsIsolatedPerTenant(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	f := seedScheduler(t, pool)
+
+	// A third tenant whose timezone is garbage (seeded via raw SQL — the
+	// write path validates against pg_timezone_names, so only a manual write
+	// can produce this state). Its order is overdue on ANY calendar (two
+	// days before the UTC date), so the UTC fallback must still mark it.
+	badTenant, badObject, badTmpl, badVersion, badOrder := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	must := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	must(`INSERT INTO tenant (id, name, timezone) VALUES ($1,'Broken','Not/A_Zone')`, badTenant)
+	must(`INSERT INTO object (id, tenant_id, name) VALUES ($1,$2,'O')`, badObject, badTenant)
+	must(`INSERT INTO checklist_template (id, tenant_id, name) VALUES ($1,$2,'T')`, badTmpl, badTenant)
+	must(`INSERT INTO checklist_template_version (id, template_id, version) VALUES ($1,$2,1)`, badVersion, badTmpl)
+	must(`INSERT INTO work_order (id, tenant_id, object_id, version_id, due_date, status)
+	      VALUES ($1,$2,$3,$4, (now() AT TIME ZONE 'UTC')::date - 2, 'scheduled')`, badOrder, badTenant, badObject, badVersion)
+
+	sched := NewScheduler(pool, newFakeStore())
+	logs := captureLogs(t)
+
+	if err := sched.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v, want nil (one tenant's bad timezone must not fail the job)", err)
+	}
+
+	if got := orderStatus(t, pool, f.orderA); got != "missed" {
+		t.Errorf("valid tenant A order status = %q, want missed (must be isolated from the bad-timezone tenant)", got)
+	}
+	if got := orderStatus(t, pool, f.orderB); got != "scheduled" {
+		t.Errorf("valid tenant B order status = %q, want scheduled (control)", got)
+	}
+	if got := orderStatus(t, pool, badOrder); got != "missed" {
+		t.Errorf("bad-timezone tenant order status = %q, want missed (UTC fallback)", got)
+	}
+	if !strings.Contains(logs.String(), "invalid tenant timezone") {
+		t.Errorf("logs missing invalid-timezone warning, got: %s", logs.String())
+	}
+}
+
 // TestSchedulerGCNeverDeletesOnExistsUncertainty covers the evidence rule
 // explicitly: if store.Exists itself errors (S3 unreachable, credentials
 // issue, etc.), the row must never be deleted — uncertainty about whether

@@ -37,6 +37,14 @@ const apiDateLayout = "2006-01-02"
 // realistically spans.
 const maxPeriodSpan = 92 * 24 * time.Hour
 
+// maxPendingReports caps how many 'generating' rows one tenant may hold in
+// the queue at once. The render worker is a single FIFO consumer across all
+// tenants, so without a cap one tenant's retry loop could starve everyone
+// else's reports. It is a soft cap (two concurrent creates may briefly
+// overshoot by one — the count and the insert are separate statements), which
+// is fine: the point is bounding queue depth, not enforcing an invariant.
+const maxPendingReports = 5
+
 func problem(status int, slug, detail string) *huma.ErrorModel {
 	return &huma.ErrorModel{Type: slug, Title: http.StatusText(status), Status: status, Detail: detail}
 }
@@ -130,6 +138,14 @@ func registerCreateReport(api huma.API, q *db.Queries) {
 		from, to, perr := parsePeriod(in.Body.PeriodFrom, in.Body.PeriodTo)
 		if perr != nil {
 			return nil, perr
+		}
+		pending, err := q.CountGeneratingReports(ctx, p.TenantID)
+		if err != nil {
+			return nil, fmt.Errorf("counting pending reports for tenant %s: %w", p.TenantID, err)
+		}
+		if pending >= maxPendingReports {
+			return nil, problem(http.StatusTooManyRequests, "report-queue-full",
+				fmt.Sprintf("this tenant already has %d reports generating; wait for one to finish before enqueueing another", pending))
 		}
 		var contractID uuid.NullUUID
 		if in.Body.ContractID != nil {

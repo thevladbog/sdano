@@ -102,7 +102,7 @@ func run() error {
 	// distinguishes a completed seed ("nothing to do") from one that failed
 	// after OpsCreateTenant committed but before the second transaction did
 	// (tenant exists, objects missing) — the latter prints cleanup SQL,
-	// because the stranded admin's password was shown never (the failure
+	// because the stranded admin's password was never shown (the failure
 	// path exits before printSummary) and cannot be recovered.
 	if existingID, err := q.GetTenantByName(ctx, demoTenantName); err == nil {
 		return reportExistingTenant(ctx, pool, existingID)
@@ -143,8 +143,13 @@ func run() error {
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := q.WithTx(tx)
 
-	if err := qtx.SetTenantTimezone(ctx, db.SetTenantTimezoneParams{ID: tenant.TenantID, Timezone: demoTenantTZ}); err != nil {
+	// SetTenantTimezone validates against pg_timezone_names (0 rows = unknown
+	// zone). demoTenantTZ is a constant that always passes; the check guards
+	// future edits to it.
+	if n, err := qtx.SetTenantTimezone(ctx, db.SetTenantTimezoneParams{ID: tenant.TenantID, Timezone: demoTenantTZ}); err != nil {
 		return fmt.Errorf("setting demo tenant timezone: %w", err)
+	} else if n == 0 {
+		return fmt.Errorf("setting demo tenant timezone: %q is not a timezone Postgres recognizes", demoTenantTZ)
 	}
 
 	clientName := demoContractClient
@@ -263,7 +268,10 @@ func reportExistingTenant(ctx context.Context, pool *pgxpool.Pool, tenantID uuid
 	if objects < 0 {
 		return fmt.Errorf("demo tenant %q (id %s) exists but vanished mid-check — rerun seed-demo", demoTenantName, tenantID)
 	}
-	if objects == demoObjectCount {
+	// >= rather than ==: a dev who added objects to the demo tenant after a
+	// successful seed must get "nothing to do", not a misdiagnosed
+	// incomplete-seed message whose cleanup SQL would delete their data.
+	if objects >= demoObjectCount {
 		return fmt.Errorf("demo tenant %q already exists — seed-demo has already run; nothing to do", demoTenantName)
 	}
 

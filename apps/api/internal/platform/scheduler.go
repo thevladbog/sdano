@@ -27,9 +27,10 @@ const tickInterval = time.Hour
 const orphanPhotoAge = 14 * 24 * time.Hour
 
 // Scheduler runs the process's hourly background jobs: marking overdue
-// scheduled work orders missed (tenant-timezone-aware, via
-// db/queries/platform.sql's MarkOverdueOrdersMissed) and garbage-collecting
-// orphaned photo rows (presigned for upload but never confirmed).
+// scheduled work orders missed (tenant-timezone-aware, one tenant at a time
+// via db/queries/platform.sql's MarkTenantOverdueOrdersMissed) and
+// garbage-collecting orphaned photo rows (presigned for upload but never
+// confirmed).
 type Scheduler struct {
 	q     *db.Queries
 	store photo.ObjectStore
@@ -90,19 +91,44 @@ func (s *Scheduler) RunOnce(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// markOverdueMissed flips every tenant's overdue scheduled orders to missed
-// in one cross-tenant statement (the SQL itself encodes each tenant's
-// timezone — see MarkOverdueOrdersMissed). Only logs when it actually
-// changed something, so a quiet hour produces no log noise.
+// markOverdueMissed flips every tenant's overdue scheduled orders to missed,
+// one tenant at a time. The tenant-local date is computed in Go (the same
+// LoadLocation-with-UTC-fallback shape as workorder.TenantToday) so one
+// tenant's invalid timezone degrades only that tenant to a UTC calendar —
+// with a warning — instead of failing the whole cross-tenant sweep, and one
+// tenant's DB error is collected without stopping the rest. Only logs when
+// it actually changed something, so a quiet hour produces no log noise.
 func (s *Scheduler) markOverdueMissed(ctx context.Context) error {
-	n, err := s.q.MarkOverdueOrdersMissed(ctx)
+	tenants, err := s.q.ListTenantTimezones(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("listing tenant timezones: %w", err)
 	}
-	if n > 0 {
-		slog.Info("marked overdue orders missed", "count", n)
+	var errs []error
+	var total int64
+	for _, tenant := range tenants {
+		loc, lerr := time.LoadLocation(tenant.Timezone)
+		if lerr != nil {
+			slog.Warn("invalid tenant timezone, falling back to UTC", "tenant", tenant.ID, "timezone", tenant.Timezone)
+			loc = time.UTC
+		}
+		// Tenant-local "today" as a date-only value pinned to UTC — pgtype.Date
+		// carries year/month/day only, so the Time's own zone must not shift
+		// the calendar date (same shape as workorder.TenantToday).
+		now := time.Now().In(loc)
+		today := pgtype.Date{Time: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC), Valid: true}
+		n, err := s.q.MarkTenantOverdueOrdersMissed(ctx, db.MarkTenantOverdueOrdersMissedParams{
+			TenantID: tenant.ID, TenantToday: today,
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("tenant %s: %w", tenant.ID, err))
+			continue
+		}
+		total += n
 	}
-	return nil
+	if total > 0 {
+		slog.Info("marked overdue orders missed", "count", total)
+	}
+	return errors.Join(errs...)
 }
 
 // gcOrphanPhotos deletes photo rows that were presigned for upload but never
