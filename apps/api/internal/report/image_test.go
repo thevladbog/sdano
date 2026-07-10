@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"image/png"
 	"strings"
 	"testing"
 )
@@ -81,6 +82,34 @@ func TestDownscaleJPEGPassesThroughSmallImageUnupscaled(t *testing.T) {
 	b := img.Bounds()
 	if b.Dx() != 100 || b.Dy() != 80 {
 		t.Fatalf("bounds = %dx%d; want unchanged 100x80 (never upscale)", b.Dx(), b.Dy())
+	}
+}
+
+// TestDownscaleJPEGAcceptsPNG proves the image.Decode fallback is live: a
+// PNG that slipped past the jpeg-only presign contract (S3 never validates
+// the uploaded bytes) still renders into the report as a JPEG data URI
+// instead of failing the whole report — evidence is sacred, and a decodable
+// photo must never be the reason a tenant's report dies after 3 attempts.
+func TestDownscaleJPEGAcceptsPNG(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 60, 40))
+	for y := 0; y < 40; y++ {
+		for x := 0; x < 60; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: 200, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encoding test png: %v", err)
+	}
+
+	dataURI, err := DownscaleJPEG(buf.Bytes())
+	if err != nil {
+		t.Fatalf("DownscaleJPEG(png): %v", err)
+	}
+	out := decodeDataURI(t, dataURI)
+	b := out.Bounds()
+	if b.Dx() != 60 || b.Dy() != 40 {
+		t.Fatalf("bounds = %dx%d; want unchanged 60x40", b.Dx(), b.Dy())
 	}
 }
 

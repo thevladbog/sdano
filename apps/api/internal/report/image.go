@@ -8,6 +8,15 @@ import (
 	"image/jpeg"
 	"math"
 
+	// Registers the PNG decoder so DownscaleJPEG's image.Decode fallback is
+	// actually live in the production binary (image.Decode only sniffs
+	// formats that have been registered — without this import the fallback
+	// could never decode anything jpeg.Decode itself rejected). Mobile
+	// uploads are contractually JPEG (presign enforces the content type),
+	// but S3 never validates the bytes; a stray PNG must not be the reason
+	// a tenant's report dies after 3 render attempts.
+	_ "image/png"
+
 	"golang.org/x/image/draw"
 )
 
@@ -20,12 +29,13 @@ const maxLongEdgePx = 1200
 const jpegQuality = 80
 
 // DownscaleJPEG decodes raw photo bytes (a plain JPEG first; falling back to
-// the standard library's format-sniffing image.Decode for anything
-// image/jpeg's decoder rejects on its own), scales the longest edge down to
-// at most maxLongEdgePx using a high-quality Catmull-Rom filter — never
-// upscaling a photo already under the cap — and re-encodes as JPEG at
-// jpegQuality. The result is returned as a data URI ready for an <img src>
-// in the report template (RenderHTML's safeURL trusts exactly this shape).
+// the standard library's format-sniffing image.Decode — PNG registered
+// above — for anything image/jpeg's decoder rejects on its own), scales the
+// longest edge down to at most maxLongEdgePx using a high-quality
+// Catmull-Rom filter — never upscaling a photo already under the cap — and
+// re-encodes as JPEG at jpegQuality. The result is returned as a data URI
+// ready for an <img src> in the report template (RenderHTML's safeURL
+// trusts exactly this shape).
 func DownscaleJPEG(raw []byte) (string, error) {
 	src, jpegErr := jpeg.Decode(bytes.NewReader(raw))
 	if jpegErr != nil {
