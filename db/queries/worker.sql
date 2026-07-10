@@ -82,7 +82,11 @@ FROM work_execution
 WHERE id = $1 AND tenant_id = $2;
 
 -- name: GetExecutionForWorker :one
-SELECT id, tenant_id, worker_id
+-- device_finished_at is included so photo presign/confirm can gate on the
+-- parent execution's STORED completion time under the precise
+-- pre-suspension evidence rule (see photo/http.go's evidenceSuspensionGate)
+-- without a second query.
+SELECT id, tenant_id, worker_id, device_finished_at
 FROM work_execution
 WHERE id = $1 AND tenant_id = $2;
 

@@ -171,6 +171,29 @@ func problem(status int, slug, detail string) *huma.ErrorModel {
 	return &huma.ErrorModel{Type: slug, Title: http.StatusText(status), Status: status, Detail: detail}
 }
 
+// evidenceSuspensionGate enforces the precise pre-suspension evidence rule
+// (docs/07 "Tenant status enforcement"): once tenant.suspended_at is set,
+// the execution upsert only accepts a submission whose device_finished_at
+// is present and strictly before suspended_at — new post-suspension work is
+// rejected even though auth.SuspendedWritable lets the request past the
+// coarse tenant-status gate. When suspended_at is NULL (a legacy/manual
+// suspension predating the ops CLI), the check is a no-op and the blanket
+// carve-out applies unchanged: evidence must never be hostage to billing
+// (see platform/ops.go's suspended_at invariant, docs/12).
+func evidenceSuspensionGate(ctx context.Context, q *db.Queries, tenantID uuid.UUID, deviceFinishedAt *time.Time) error {
+	susp, err := q.GetTenantSuspension(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("checking tenant suspension for %s: %w", tenantID, err)
+	}
+	if !susp.Valid {
+		return nil
+	}
+	if deviceFinishedAt == nil || !deviceFinishedAt.Before(susp.Time) {
+		return problem(http.StatusForbidden, "tenant-suspended", "tenant suspended; only pre-suspension evidence is accepted")
+	}
+	return nil
+}
+
 type executionItemBody struct {
 	ID             string     `json:"id" format:"uuid"`
 	TemplateItemID string     `json:"template_item_id" format:"uuid"`
@@ -194,6 +217,7 @@ type executionOutput struct {
 }
 
 func registerExecutions(api huma.API, pool *pgxpool.Pool) {
+	q := db.New(pool)
 	huma.Register(api, huma.Operation{
 		OperationID: "upsertWorkerExecution",
 		Method:      http.MethodPut,
@@ -225,6 +249,11 @@ func registerExecutions(api huma.API, pool *pgxpool.Pool) {
 				return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid template_item_id")
 			}
 			items = append(items, ExecutionItemInput{ID: iid, TemplateItemID: tid, Checked: it.Checked, CheckedAt: it.CheckedAt})
+		}
+		// Gate before any write: a suspended tenant with suspended_at set
+		// only gets this snapshot applied if it's pre-suspension evidence.
+		if err := evidenceSuspensionGate(ctx, q, p.TenantID, in.Body.DeviceFinishedAt); err != nil {
+			return nil, err
 		}
 		if err := UpsertExecution(ctx, pool, p.TenantID, p.UserID, execID, ExecutionInput{
 			WorkOrderID: woID, StartedAt: in.Body.StartedAt, DeviceFinishedAt: in.Body.DeviceFinishedAt,

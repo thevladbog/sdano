@@ -58,7 +58,7 @@ Three outbox job kinds map to the three network steps; each is independently ret
 |---|---|
 | No network / timeout | Backoff, retry forever. Never surfaces as an error to the worker — it's a *state* ("waiting for network"), not a problem. |
 | 401 (token revoked) | Stop the queue (`blocked`), route to sign-in. Outbox survives; flushes after re-auth. |
-| 403 `tenant-suspended` | Work performed **before** suspension still flushes (the server accepts it — see 07-api-spec). Jobs for work attempted after suspension are impossible by construction: the app enters read-only mode on the first suspended response and disables new work. The outbox is preserved either way. |
+| 403 `tenant-suspended` | Work performed **before** suspension still flushes (the server accepts it — see 07-api-spec). The boundary is `tenant.suspended_at`, set only by the `sdano-ops tenant suspend` CLI command (12-platform-ops.md): an outbox job's `device_finished_at` must be strictly before that timestamp to be accepted once suspended. Jobs for work attempted after suspension are impossible by construction: the app enters read-only mode on the first suspended response and disables new work. The outbox is preserved either way. |
 | 409 / validation 4xx | Should be impossible (idempotent upserts) — treated as a bug: job marked `blocked`, error logged to crash reporting, red "needs attention" badge. Never silently dropped: **evidence is never lost silently.** |
 | 5xx | Backoff and retry — server's problem, not the worker's. |
 | Presign expired | Re-presign, same key. |
