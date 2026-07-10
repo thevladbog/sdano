@@ -274,6 +274,81 @@ func TestGetReportNotFound(t *testing.T) {
 	}
 }
 
+// TestGetReportCrossTenantIs404 pins the security property that a report id
+// belonging to another tenant is indistinguishable from a nonexistent one:
+// GetReport is tenant-scoped, so the response is the same 404
+// report-not-found — never a 403, never the other tenant's data.
+func TestGetReportCrossTenantIs404(t *testing.T) {
+	pool := testdb.New(t)
+	tenantA, adminA := seedTenantAndAdmin(t, pool)
+	tenantB, adminB := seedTenantAndAdmin(t, pool)
+	api := buildReportAPI(t, pool)
+
+	create := api.Post("/api/v1/staff/reports",
+		"Authorization: "+bearerFor(t, tenantA, adminA, auth.RoleAdmin),
+		map[string]any{"period_from": "2026-06-01", "period_to": "2026-06-30"})
+	if create.Code != http.StatusAccepted {
+		t.Fatalf("create: got %d; body %s", create.Code, create.Body)
+	}
+	var created struct {
+		ReportID uuid.UUID `json:"report_id"`
+	}
+	decodeJSON(t, create, &created)
+
+	rec := api.Get("/api/v1/staff/reports/"+created.ReportID.String(),
+		"Authorization: "+bearerFor(t, tenantB, adminB, auth.RoleAdmin))
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "report-not-found") {
+		t.Fatalf("cross-tenant get: got %d body %s, want 404 report-not-found", rec.Code, rec.Body)
+	}
+}
+
+// TestCreateReportAcceptsExact92DaySpan pins the period cap's boundary: a
+// span of exactly 92 days (a full calendar quarter) is accepted — only 93
+// and up is invalid-period (covered in TestCreateReportInvalidPeriod).
+func TestCreateReportAcceptsExact92DaySpan(t *testing.T) {
+	pool := testdb.New(t)
+	tenant, admin := seedTenantAndAdmin(t, pool)
+	api := buildReportAPI(t, pool)
+	bearer := "Authorization: " + bearerFor(t, tenant, admin, auth.RoleAdmin)
+
+	// 2026-01-01 to 2026-04-03 is exactly 92 days (31+28+31+2).
+	rec := api.Post("/api/v1/staff/reports", bearer, map[string]any{
+		"period_from": "2026-01-01",
+		"period_to":   "2026-04-03",
+	})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("92-day span: got %d body %s, want 202", rec.Code, rec.Body)
+	}
+}
+
+// TestReportEndpointsRejectMalformedUUIDs pins the 422s on both report
+// endpoints that take a caller-supplied uuid. The poll path param is parsed
+// in-handler (invalid-uuid slug); the create body's contract_id carries
+// format:"uuid", so huma's schema validation rejects a malformed string
+// before the handler runs — a generic 422 problem locating body.contract_id
+// (the same shape as photo presign's body uuids), with the handler's own
+// invalid-uuid branch left as defense in depth.
+func TestReportEndpointsRejectMalformedUUIDs(t *testing.T) {
+	pool := testdb.New(t)
+	tenant, admin := seedTenantAndAdmin(t, pool)
+	api := buildReportAPI(t, pool)
+	bearer := "Authorization: " + bearerFor(t, tenant, admin, auth.RoleAdmin)
+
+	get := api.Get("/api/v1/staff/reports/not-a-uuid", bearer)
+	if get.Code != http.StatusUnprocessableEntity || !strings.Contains(get.Body.String(), "invalid-uuid") {
+		t.Fatalf("get with malformed id: got %d body %s, want 422 invalid-uuid", get.Code, get.Body)
+	}
+
+	create := api.Post("/api/v1/staff/reports", bearer, map[string]any{
+		"contract_id": "not-a-uuid",
+		"period_from": "2026-06-01",
+		"period_to":   "2026-06-30",
+	})
+	if create.Code != http.StatusUnprocessableEntity || !strings.Contains(create.Body.String(), "body.contract_id") {
+		t.Fatalf("create with malformed contract_id: got %d body %s, want 422 locating body.contract_id", create.Code, create.Body)
+	}
+}
+
 // TestCreateReportRejectsWorkerRole proves the path-prefix role gate
 // (auth.Authorize, /api/v1/staff/*) already rejects a worker-role token
 // before the handler ever runs — no extra role check needed in http.go.
