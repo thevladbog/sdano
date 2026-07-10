@@ -34,12 +34,12 @@ WHERE id = (
 RETURNING id, tenant_id, contract_id, period_from, period_to, render_attempts;
 
 -- name: MarkReportReady :exec
-UPDATE report SET status = 'ready', s3_key = $2, generated_at = now()
-WHERE id = $1 AND status = 'generating';
+UPDATE report SET status = 'ready', s3_key = $3, generated_at = now()
+WHERE id = $1 AND tenant_id = $2 AND status = 'generating';
 
 -- name: MarkReportFailed :exec
-UPDATE report SET status = 'failed', failure_reason = $2
-WHERE id = $1 AND status = 'generating';
+UPDATE report SET status = 'failed', failure_reason = $3
+WHERE id = $1 AND tenant_id = $2 AND status = 'generating';
 
 -- name: FailExhaustedReports :execrows
 -- Recovery sweep: a row stuck at >= 3 attempts but still 'generating' means the

@@ -37,7 +37,7 @@ func safeURL(s string) template.URL {
 // (BuildReportData, PreviewFixture) constructs these values with an explicit
 // zone — never the render host's local one.
 func formatDate(t time.Time) string {
-	return t.Format("02.01.2006")
+	return t.Format(dateLayout)
 }
 
 var reportTmpl = template.Must(template.New("report.html").Funcs(template.FuncMap{

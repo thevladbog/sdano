@@ -52,15 +52,22 @@ func NewWorker(pool *pgxpool.Pool, store photo.ObjectStore, renderer PDFRenderer
 	return &Worker{q: db.New(pool), store: store, renderer: renderer}
 }
 
-// Run loops tick+sleep(5s) until ctx is cancelled. main.go runs this against
-// the process's signal context, so the worker stops on the same shutdown
-// signal as the HTTP server.
+// Run loops tick until ctx is cancelled, draining the queue back-to-back
+// while rows are being processed and sleeping pollInterval only once a tick
+// finds the queue empty. main.go runs this against the process's signal
+// context, so the worker stops on the same shutdown signal as the HTTP
+// server.
 func (w *Worker) Run(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		w.tick(ctx)
+		if processed := w.tick(ctx); processed {
+			// A processed row means the queue may still have a backlog —
+			// loop straight back to ClaimNextReport instead of sleeping, so
+			// a burst of queued reports drains as fast as rendering allows.
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -110,7 +117,7 @@ func (w *Worker) tick(ctx context.Context) bool {
 			// without letting a wedged DB block exit.
 			failCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failMarkTimeout)
 			defer cancel()
-			if failErr := w.q.MarkReportFailed(failCtx, db.MarkReportFailedParams{ID: claimed.ID, FailureReason: &reason}); failErr != nil {
+			if failErr := w.q.MarkReportFailed(failCtx, db.MarkReportFailedParams{ID: claimed.ID, TenantID: claimed.TenantID, FailureReason: &reason}); failErr != nil {
 				slog.Error("marking report failed", "report_id", claimed.ID, "error", failErr)
 			}
 		}
@@ -174,7 +181,7 @@ func (w *Worker) render(ctx context.Context, claimed db.ClaimNextReportRow) erro
 
 	// If this mark fails after a successful Put, the uploaded PDF stays in S3
 	// unreferenced (regeneration creates a new row/key) — harmless, deliberate.
-	if err := w.q.MarkReportReady(ctx, db.MarkReportReadyParams{ID: claimed.ID, S3Key: &key}); err != nil {
+	if err := w.q.MarkReportReady(ctx, db.MarkReportReadyParams{ID: claimed.ID, TenantID: claimed.TenantID, S3Key: &key}); err != nil {
 		return fmt.Errorf("marking report ready: %w", err)
 	}
 	return nil

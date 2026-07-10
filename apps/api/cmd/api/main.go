@@ -91,19 +91,29 @@ func run(logger *slog.Logger) error {
 	store := photo.NewS3Store(s3c, cfg.S3Bucket)
 	reportWorker := report.NewWorker(pool, store, report.NewChromeRenderer(cfg.ChromeCDPURL))
 
+	// wg tracks the two background goroutines below so run() doesn't return
+	// (and defer pool.Close() doesn't fire) while either is still mid-tick.
+	// The wait is short: both Run loops exit promptly on ctx.Done (render
+	// work aborts via its child ctx; the fail-mark/sweep write is bounded by
+	// its own short detached timeout), so this never meaningfully delays
+	// shutdown.
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reportWorker.Run(ctx)
+	}()
+
 	// Hourly scheduler: tenant-timezone-aware missed-order marking + orphan
 	// photo GC (task 6). Shares the same store and signal ctx as the report
 	// worker — both stop on the same shutdown signal.
 	scheduler := platform.NewScheduler(pool, store)
-
-	// bg tracks the two background loops so shutdown waits for their current
-	// iteration to wind down (e.g. the report worker's detached fail-mark
-	// write) before the deferred pool.Close() yanks the DB out from under
-	// them.
-	var bg sync.WaitGroup
-	bg.Add(2)
-	go func() { defer bg.Done(); reportWorker.Run(ctx) }()
-	go func() { defer bg.Done(); scheduler.Run(ctx) }()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		scheduler.Run(ctx)
+	}()
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -120,10 +130,10 @@ func run(logger *slog.Logger) error {
 	select {
 	case err := <-errCh:
 		// The server died on its own (no signal): cancel the background ctx
-		// explicitly, or bg.Wait would block forever on the still-running
+		// explicitly, or wg.Wait would block forever on the still-running
 		// loops.
 		stop()
-		bg.Wait()
+		wg.Wait()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("http server: %w", err)
 		}
@@ -131,10 +141,17 @@ func run(logger *slog.Logger) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("graceful shutdown: %w", err)
+		shutdownErr := srv.Shutdown(shutdownCtx)
+		// ctx is already cancelled at this point, so the report worker and
+		// scheduler loops are already exiting (or have exited); this just
+		// waits for that to actually finish. Both loops exit promptly on
+		// ctx.Done (in-flight renders abort via a child ctx; the detached
+		// fail-mark write is bounded by its own short timeout), so the wait
+		// here is short.
+		wg.Wait()
+		if shutdownErr != nil {
+			return fmt.Errorf("graceful shutdown: %w", shutdownErr)
 		}
-		bg.Wait()
 		logger.Info("api stopped")
 		return nil
 	}
