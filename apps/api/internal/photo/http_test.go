@@ -2,6 +2,7 @@ package photo_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -21,9 +22,11 @@ import (
 
 const testSecret = "photo-test-secret-at-least-32-bytes!!"
 
-// fakeStore records presign calls and answers Exists from a set.
+// fakeStore records presign calls, answers Exists from a set, and backs
+// Get/Put with an in-memory object map.
 type fakeStore struct {
-	exists map[string]bool
+	exists  map[string]bool
+	objects map[string][]byte
 }
 
 func (f *fakeStore) PresignPut(_ context.Context, key, _ string) (string, time.Time, error) {
@@ -34,6 +37,20 @@ func (f *fakeStore) Exists(_ context.Context, key string) (bool, error) {
 }
 func (f *fakeStore) PresignGet(_ context.Context, key string) (string, time.Time, error) {
 	return "https://s3.example/GET/" + key + "?sig=g", time.Now().Add(5 * time.Minute), nil
+}
+func (f *fakeStore) Get(_ context.Context, key string) ([]byte, error) {
+	body, ok := f.objects[key]
+	if !ok {
+		return nil, fmt.Errorf("fakeStore: no object at key %q", key)
+	}
+	return body, nil
+}
+func (f *fakeStore) Put(_ context.Context, key, _ string, body []byte) error {
+	if f.objects == nil {
+		f.objects = map[string][]byte{}
+	}
+	f.objects[key] = body
+	return nil
 }
 
 // seedExecution inserts a tenant, worker, object, version, order, and an
