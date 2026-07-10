@@ -7,6 +7,7 @@ package report
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -126,12 +127,14 @@ func BuildReportData(ctx context.Context, q *db.Queries, r ClaimedReport, photoL
 	// Report times (job completion, photo captions, generation date) print in
 	// the tenant's wall clock — the zone the worker and the inspector live in
 	// (docs/09: "completion time (device time)"). tenant.timezone is validated
-	// at write time and defaults to 'UTC' (migration 0003), so a load failure
-	// is a can't-happen; fall back to UTC silently rather than fail the render.
-	// Determinism holds either way: same stored instant + same tenant timezone
-	// → same output on any render host.
+	// at write time (SetTenantTimezone checks pg_timezone_names) and defaults
+	// to 'UTC' (migration 0003), so a load failure is a can't-happen; fall
+	// back to UTC with a warning (the workorder.TenantToday precedent) rather
+	// than fail the render. Determinism holds either way: same stored instant
+	// + same tenant timezone → same output on any render host.
 	loc, locErr := time.LoadLocation(tenant.Timezone)
 	if locErr != nil {
+		slog.Warn("invalid tenant timezone, falling back to UTC", "tenant", r.TenantID, "timezone", tenant.Timezone)
 		loc = time.UTC
 	}
 

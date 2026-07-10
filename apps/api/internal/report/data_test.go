@@ -1,7 +1,10 @@
 package report_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -297,6 +300,41 @@ func TestBuildReportDataUTCFallback(t *testing.T) {
 	}
 	if got := data.Objects[0].Jobs[0].FinishedAt; got != "10:30" {
 		t.Errorf("FinishedAt = %q, want 10:30 (stored 10:30Z, tenant tz UTC)", got)
+	}
+}
+
+// TestBuildReportDataInvalidTimezoneWarnsAndFallsBackToUTC proves an invalid
+// tenant.timezone (only reachable via a manual SQL write — the write path
+// validates against pg_timezone_names) degrades loudly, not silently: the
+// report still renders on a UTC clock and a warning is logged, matching the
+// workorder.TenantToday precedent.
+func TestBuildReportDataInvalidTimezoneWarnsAndFallsBackToUTC(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant (id, name, timezone) VALUES ($1, 'Broken TZ Co', 'Not/A_Zone')`, tenant); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	data, err := report.BuildReportData(ctx, db.New(pool), report.ClaimedReport{
+		ID:         uuid.New(),
+		TenantID:   tenant,
+		PeriodFrom: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		PeriodTo:   time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC),
+	}, fakeLoader(new(int)))
+	if err != nil {
+		t.Fatalf("BuildReportData: %v", err)
+	}
+	if got := data.GeneratedAt.Location(); got != time.UTC {
+		t.Errorf("GeneratedAt location = %q, want UTC fallback", got)
+	}
+	if !strings.Contains(buf.String(), "invalid tenant timezone") {
+		t.Errorf("logs missing invalid-timezone warning, got: %s", buf.String())
 	}
 }
 
