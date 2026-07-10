@@ -81,6 +81,13 @@ export interface ConfirmInputBody {
   taken_at?: string;
 }
 
+export interface CreateWorkerInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minLength 1 */
+  display_name: string;
+}
+
 export interface ErrorDetail {
   /** Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id' */
   location?: string;
@@ -239,6 +246,24 @@ export interface ListOutputBody {
   objects: Object[] | null;
 }
 
+export interface StaffWorkerView {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  display_name: string;
+  id: string;
+  invite_code?: string;
+  invite_expires_at?: string;
+  is_active: boolean;
+}
+
+export interface ListWorkersOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  workers: StaffWorkerView[] | null;
+}
+
 export interface LoginInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -319,6 +344,13 @@ export interface PatchOrderBody {
   due_date?: string;
 }
 
+export interface PatchWorkerInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  display_name?: string;
+  is_active?: boolean;
+}
+
 export interface PhotoView {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -392,6 +424,12 @@ export interface RefreshInputBody {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   refresh_token: string;
+}
+
+export interface ReinviteWorkerInputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  revoke_tokens?: boolean;
 }
 
 export interface TodayObject {
@@ -1068,6 +1106,208 @@ export const patchStaffWorkOrder = async (id: string,
 
   const data: patchStaffWorkOrderResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as patchStaffWorkOrderResponse
+}
+
+
+
+export type listStaffWorkersResponse200 = {
+  data: ListWorkersOutputBody
+  status: 200
+}
+
+export type listStaffWorkersResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listStaffWorkersResponseSuccess = (listStaffWorkersResponse200) & {
+  headers: Headers;
+};
+export type listStaffWorkersResponseError = (listStaffWorkersResponseDefault) & {
+  headers: Headers;
+};
+
+export type listStaffWorkersResponse = (listStaffWorkersResponseSuccess | listStaffWorkersResponseError)
+
+export const getListStaffWorkersUrl = () => {
+
+
+
+
+  return `/api/v1/staff/workers`
+}
+
+/**
+ * @summary List workers
+ */
+export const listStaffWorkers = async ( options?: RequestInit): Promise<listStaffWorkersResponse> => {
+
+  const res = await fetch(getListStaffWorkersUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listStaffWorkersResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listStaffWorkersResponse
+}
+
+
+
+export type createStaffWorkerResponse201 = {
+  data: StaffWorkerView
+  status: 201
+}
+
+export type createStaffWorkerResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createStaffWorkerResponseSuccess = (createStaffWorkerResponse201) & {
+  headers: Headers;
+};
+export type createStaffWorkerResponseError = (createStaffWorkerResponseDefault) & {
+  headers: Headers;
+};
+
+export type createStaffWorkerResponse = (createStaffWorkerResponseSuccess | createStaffWorkerResponseError)
+
+export const getCreateStaffWorkerUrl = () => {
+
+
+
+
+  return `/api/v1/staff/workers`
+}
+
+/**
+ * @summary Create a worker and issue an invite code
+ */
+export const createStaffWorker = async (createWorkerInputBody: NonReadonly<CreateWorkerInputBody>, options?: RequestInit): Promise<createStaffWorkerResponse> => {
+
+  const res = await fetch(getCreateStaffWorkerUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(createWorkerInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createStaffWorkerResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createStaffWorkerResponse
+}
+
+
+
+export type patchStaffWorkerResponse200 = {
+  data: StaffWorkerView
+  status: 200
+}
+
+export type patchStaffWorkerResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type patchStaffWorkerResponseSuccess = (patchStaffWorkerResponse200) & {
+  headers: Headers;
+};
+export type patchStaffWorkerResponseError = (patchStaffWorkerResponseDefault) & {
+  headers: Headers;
+};
+
+export type patchStaffWorkerResponse = (patchStaffWorkerResponseSuccess | patchStaffWorkerResponseError)
+
+export const getPatchStaffWorkerUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/staff/workers/${id}`
+}
+
+/**
+ * @summary Rename or activate/deactivate a worker
+ */
+export const patchStaffWorker = async (id: string,
+    patchWorkerInputBody: NonReadonly<PatchWorkerInputBody>, options?: RequestInit): Promise<patchStaffWorkerResponse> => {
+
+  const res = await fetch(getPatchStaffWorkerUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(patchWorkerInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: patchStaffWorkerResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as patchStaffWorkerResponse
+}
+
+
+
+export type reinviteStaffWorkerResponse200 = {
+  data: StaffWorkerView
+  status: 200
+}
+
+export type reinviteStaffWorkerResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type reinviteStaffWorkerResponseSuccess = (reinviteStaffWorkerResponse200) & {
+  headers: Headers;
+};
+export type reinviteStaffWorkerResponseError = (reinviteStaffWorkerResponseDefault) & {
+  headers: Headers;
+};
+
+export type reinviteStaffWorkerResponse = (reinviteStaffWorkerResponseSuccess | reinviteStaffWorkerResponseError)
+
+export const getReinviteStaffWorkerUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/staff/workers/${id}/reinvite`
+}
+
+/**
+ * @summary Issue a fresh invite code for a worker
+ */
+export const reinviteStaffWorker = async (id: string,
+    reinviteWorkerInputBody: NonReadonly<ReinviteWorkerInputBody>, options?: RequestInit): Promise<reinviteStaffWorkerResponse> => {
+
+  const res = await fetch(getReinviteStaffWorkerUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(reinviteWorkerInputBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: reinviteStaffWorkerResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as reinviteStaffWorkerResponse
 }
 
 

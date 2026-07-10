@@ -20,6 +20,7 @@ import (
 	"sdano.app/api/internal/db"
 	"sdano.app/api/internal/object"
 	"sdano.app/api/internal/photo"
+	"sdano.app/api/internal/roster"
 	"sdano.app/api/internal/workorder"
 )
 
@@ -100,6 +101,7 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 	object.Register(api, queries)
 	workorder.Register(api, deps.Pool)
 	photo.Register(api, deps.Pool, photo.NewS3Store(deps.S3, cfg.S3Bucket))
+	roster.Register(api, deps.Pool)
 	auth.RegisterAuthRoutes(api, auth.NewService(deps.Pool, cfg.JWTSecret))
 
 	huma.Register(api, huma.Operation{
