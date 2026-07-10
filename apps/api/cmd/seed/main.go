@@ -10,6 +10,12 @@
 // tenant already exists and aborts (exit 1) rather than creating a
 // duplicate tenant with colliding "DEMO-N" qr_tokens (qr_token is
 // globally unique) or a second confusing "Демо — ЧистоГрад" row.
+//
+// The guard is completeness-aware: OpsCreateTenant commits its own
+// transaction, so a failure in the second (everything-else) transaction
+// strands a tenant+admin whose one-time password is gone forever. A rerun
+// distinguishes that state (object count < demoObjectCount) from a
+// successful prior seed and prints the exact cleanup SQL to recover.
 package main
 
 import (
@@ -44,6 +50,11 @@ const (
 	demoWorker2Name    = "Сергей, бригада 2"
 	demoOrderDays      = 7 // a full week of pre-generated orders, starting today
 	demoObjectKind     = "bus_stop"
+	// demoObjectCount is the exact number of rows db/seed/objects.csv must
+	// contain — and, because the second transaction inserts all of them or
+	// nothing, the object count that distinguishes a completed prior seed
+	// from one that failed partway (see the guard in run).
+	demoObjectCount = 10
 )
 
 // demoChecklistItems are the four checklist steps, in display order. Only
@@ -85,12 +96,16 @@ func run() error {
 
 	q := db.New(pool)
 
-	// Idempotence guard, before any write: a prior successful run left the
-	// demo tenant in place. Abort loudly with a friendly message instead of
-	// creating a duplicate — see the package doc for why an upsert isn't
-	// the right shape here.
-	if _, err := q.GetTenantByName(ctx, demoTenantName); err == nil {
-		return fmt.Errorf("demo tenant %q already exists — seed-demo has already run; nothing to do", demoTenantName)
+	// Idempotence guard, before any write: a prior run left the demo tenant
+	// in place. Abort loudly instead of creating a duplicate — see the
+	// package doc for why an upsert isn't the right shape here. The guard
+	// distinguishes a completed seed ("nothing to do") from one that failed
+	// after OpsCreateTenant committed but before the second transaction did
+	// (tenant exists, objects missing) — the latter prints cleanup SQL,
+	// because the stranded admin's password was shown never (the failure
+	// path exits before printSummary) and cannot be recovered.
+	if existingID, err := q.GetTenantByName(ctx, demoTenantName); err == nil {
+		return reportExistingTenant(ctx, pool, existingID)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("checking for an existing demo tenant: %w", err)
 	}
@@ -101,15 +116,13 @@ func run() error {
 	}
 
 	// OpsCreateTenant commits its own transaction (tenant + admin + audit —
-	// see its doc comment in internal/platform/ops.go). Everything else
-	// below runs in one second transaction; the idempotence guard above is
-	// what makes a rerun safe, not transactional atomicity across the two.
+	// see its doc comment in internal/platform/ops.go). Everything else —
+	// timezone included — runs in one second transaction, so the only
+	// possible partial state is "tenant + admin, nothing else", which the
+	// guard above detects and explains on rerun.
 	tenant, err := platform.OpsCreateTenant(ctx, pool, demoTenantName, demoTrialDays)
 	if err != nil {
 		return fmt.Errorf("creating demo tenant: %w", err)
-	}
-	if err := q.SetTenantTimezone(ctx, db.SetTenantTimezoneParams{ID: tenant.TenantID, Timezone: demoTenantTZ}); err != nil {
-		return fmt.Errorf("setting demo tenant timezone: %w", err)
 	}
 
 	loc, err := time.LoadLocation(demoTenantTZ)
@@ -129,6 +142,10 @@ func run() error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := q.WithTx(tx)
+
+	if err := qtx.SetTenantTimezone(ctx, db.SetTenantTimezoneParams{ID: tenant.TenantID, Timezone: demoTenantTZ}); err != nil {
+		return fmt.Errorf("setting demo tenant timezone: %w", err)
+	}
 
 	clientName := demoContractClient
 	contract, err := qtx.InsertContract(ctx, db.InsertContractParams{
@@ -219,6 +236,89 @@ func run() error {
 	return nil
 }
 
+// reportExistingTenant is the guard's exit path when the demo tenant
+// already exists. A complete seed (all demoObjectCount objects present) gets
+// the friendly "nothing to do"; an incomplete one — OpsCreateTenant
+// committed, then the second transaction failed, stranding a tenant whose
+// admin password was never printed — gets an honest explanation plus the
+// exact cleanup SQL, because no rerun can ever recover that password (only
+// the argon2id hash is stored).
+//
+// Completeness is read off OpsListTenants' ActiveObjects count (no extra
+// query needed): the second transaction inserts all objects or none, and
+// nothing in a dev flow deactivates them, so "fewer than demoObjectCount
+// active objects" reliably means "the seed never finished".
+func reportExistingTenant(ctx context.Context, pool *pgxpool.Pool, tenantID uuid.UUID) error {
+	tenants, err := platform.OpsListTenants(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("counting the existing demo tenant's objects: %w", err)
+	}
+	objects := int64(-1)
+	for _, t := range tenants {
+		if t.ID == tenantID {
+			objects = t.ActiveObjects
+			break
+		}
+	}
+	if objects < 0 {
+		return fmt.Errorf("demo tenant %q (id %s) exists but vanished mid-check — rerun seed-demo", demoTenantName, tenantID)
+	}
+	if objects == demoObjectCount {
+		return fmt.Errorf("demo tenant %q already exists — seed-demo has already run; nothing to do", demoTenantName)
+	}
+
+	fmt.Fprintf(os.Stderr, `The demo tenant %q (id %s) exists but is INCOMPLETE: it has %d of %d
+objects. A prior seed-demo run failed after creating the tenant and its
+admin but before seeding the rest; that admin's one-time password was never
+printed and cannot be recovered (only its hash is stored).
+
+To recover, delete the half-seeded tenant (psql, dev database) and rerun
+`+"`make seed-demo`"+`. The tenant table's foreign keys have no ON DELETE
+CASCADE, so run these ordered deletes (ops_audit rows are intentionally
+kept — they are the platform audit trail and carry no FK):
+
+%s
+`, demoTenantName, tenantID, objects, demoObjectCount, cleanupSQL(tenantID))
+
+	return fmt.Errorf("demo tenant %q exists but is incomplete (%d of %d objects) — run the cleanup SQL above, then rerun `make seed-demo`", demoTenantName, objects, demoObjectCount)
+}
+
+// cleanupSQL returns the ordered DELETE statements that remove a demo
+// tenant and everything hanging off it. Order matters: 0001_init defines
+// every FK without ON DELETE CASCADE, so children go first (photo before
+// execution, execution items before executions, work orders before objects
+// and checklist versions, reports before contracts and users, …). The list
+// covers every table with a tenant FK as of migration 0004 — it deletes the
+// full graph even when the tenant is complete, so a rerun of a partially
+// applied cleanup is safe too.
+func cleanupSQL(tenantID uuid.UUID) string {
+	id := tenantID.String()
+	return fmt.Sprintf(`BEGIN;
+DELETE FROM photo WHERE tenant_id = '%[1]s';
+DELETE FROM work_execution_item WHERE execution_id IN
+    (SELECT id FROM work_execution WHERE tenant_id = '%[1]s');
+DELETE FROM issue_resolution WHERE tenant_id = '%[1]s';
+DELETE FROM issue WHERE tenant_id = '%[1]s';
+DELETE FROM work_execution WHERE tenant_id = '%[1]s';
+DELETE FROM work_order WHERE tenant_id = '%[1]s';
+DELETE FROM report WHERE tenant_id = '%[1]s';
+DELETE FROM checklist_template_item WHERE version_id IN
+    (SELECT v.id FROM checklist_template_version v
+     JOIN checklist_template t ON t.id = v.template_id
+     WHERE t.tenant_id = '%[1]s');
+DELETE FROM checklist_template_version WHERE template_id IN
+    (SELECT id FROM checklist_template WHERE tenant_id = '%[1]s');
+DELETE FROM checklist_template WHERE tenant_id = '%[1]s';
+DELETE FROM object WHERE tenant_id = '%[1]s';
+DELETE FROM contract WHERE tenant_id = '%[1]s';
+DELETE FROM worker_invite WHERE tenant_id = '%[1]s';
+DELETE FROM device_token WHERE tenant_id = '%[1]s';
+DELETE FROM refresh_token WHERE tenant_id = '%[1]s';
+DELETE FROM app_user WHERE tenant_id = '%[1]s';
+DELETE FROM tenant WHERE id = '%[1]s';
+COMMIT;`, id)
+}
+
 // printSummary is the ONLY place the demo admin password and invite codes
 // are ever written anywhere — stdout, once, on a successful seed. Nothing
 // in this file logs them via slog or persists them to a file (AGENTS.md:
@@ -281,6 +381,13 @@ func loadObjectRows() ([]objectRow, error) {
 			return nil, fmt.Errorf("%s: row %d: invalid lon %q: %w", path, i+1, rec[3], err)
 		}
 		rows = append(rows, objectRow{name: rec[0], address: rec[1], lat: lat, lon: lon})
+	}
+	// The guard's completeness check (reportExistingTenant) defines "seeded"
+	// as exactly demoObjectCount objects — a CSV that drifted from that count
+	// would make every future rerun misdiagnose a healthy seed, so fail
+	// loudly here instead.
+	if len(rows) != demoObjectCount {
+		return nil, fmt.Errorf("%s: expected exactly %d object rows, got %d", path, demoObjectCount, len(rows))
 	}
 	return rows, nil
 }
