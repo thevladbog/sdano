@@ -143,8 +143,13 @@ func run() error {
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := q.WithTx(tx)
 
-	if err := qtx.SetTenantTimezone(ctx, db.SetTenantTimezoneParams{ID: tenant.TenantID, Timezone: demoTenantTZ}); err != nil {
+	// SetTenantTimezone validates against pg_timezone_names (0 rows = unknown
+	// zone). demoTenantTZ is a constant that always passes; the check guards
+	// future edits to it.
+	if n, err := qtx.SetTenantTimezone(ctx, db.SetTenantTimezoneParams{ID: tenant.TenantID, Timezone: demoTenantTZ}); err != nil {
 		return fmt.Errorf("setting demo tenant timezone: %w", err)
+	} else if n == 0 {
+		return fmt.Errorf("setting demo tenant timezone: %q is not a timezone Postgres recognizes", demoTenantTZ)
 	}
 
 	clientName := demoContractClient

@@ -1,11 +1,18 @@
--- name: MarkOverdueOrdersMissed :execrows
--- Tenant-timezone-aware: an order is missed once ITS tenant's local date has
--- moved past due_date. Cross-tenant by design (the scheduler serves all tenants).
-UPDATE work_order wo SET status = 'missed'
-FROM tenant t
-WHERE t.id = wo.tenant_id
-  AND wo.status = 'scheduled'
-  AND wo.due_date < (now() AT TIME ZONE t.timezone)::date;
+-- name: ListTenantTimezones :many
+-- Scheduler-internal: the per-tenant fan-out for missed-order marking. Every
+-- status is included -- a suspended tenant's order history must stay honest
+-- too (docs/12: suspension is read-only, not history-freezing).
+SELECT id, timezone FROM tenant;
+
+-- name: MarkTenantOverdueOrdersMissed :execrows
+-- One tenant's slice of the hourly missed-marking sweep: an order is missed
+-- once the tenant's local date has moved past due_date. tenant_today is
+-- computed in Go (Scheduler.markOverdueMissed) so one tenant's invalid
+-- timezone can never fail the sweep for every other tenant.
+UPDATE work_order SET status = 'missed'
+WHERE tenant_id = sqlc.arg(tenant_id)
+  AND status = 'scheduled'
+  AND due_date < sqlc.arg(tenant_today);
 
 -- name: ListOrphanPhotos :many
 SELECT id, s3_key FROM photo
@@ -52,5 +59,10 @@ SELECT suspended_at FROM tenant WHERE id = $1;
 -- its own fixed demo tenant name.
 SELECT id FROM tenant WHERE name = $1;
 
--- name: SetTenantTimezone :exec
-UPDATE tenant SET timezone = $2 WHERE id = $1;
+-- name: SetTenantTimezone :execrows
+-- Guarded by pg_timezone_names: an unknown zone updates zero rows (the
+-- caller treats 0 as an error), so an invalid string can never enter
+-- tenant.timezone through this path and later trip the scheduler's or the
+-- report renderer's zone lookup.
+UPDATE tenant SET timezone = $2
+WHERE id = $1 AND EXISTS (SELECT 1 FROM pg_catalog.pg_timezone_names WHERE name = $2);

@@ -411,3 +411,49 @@ func TestOpsErrTenantNotFoundIsPgxNoRows(t *testing.T) {
 		t.Fatal("ErrTenantNotFound must be its own sentinel, not a leaked pgx.ErrNoRows")
 	}
 }
+
+// TestSetTenantTimezoneValidatesAgainstPgTimezoneNames proves the only
+// timezone write path (cmd/seed) can never plant a zone Postgres does not
+// recognize: an unknown name updates zero rows and leaves the column on its
+// default, a known one updates exactly one.
+func TestSetTenantTimezoneValidatesAgainstPgTimezoneNames(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	q := db.New(pool)
+
+	tenant := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO tenant (id, name) VALUES ($1, 'TZ Co')`, tenant); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+
+	readTZ := func() string {
+		t.Helper()
+		var tz string
+		if err := pool.QueryRow(ctx, `SELECT timezone FROM tenant WHERE id = $1`, tenant).Scan(&tz); err != nil {
+			t.Fatalf("reading timezone: %v", err)
+		}
+		return tz
+	}
+
+	n, err := q.SetTenantTimezone(ctx, db.SetTenantTimezoneParams{ID: tenant, Timezone: "Not/A_Zone"})
+	if err != nil {
+		t.Fatalf("SetTenantTimezone(unknown zone): %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("SetTenantTimezone(unknown zone) updated %d rows, want 0", n)
+	}
+	if got := readTZ(); got != "UTC" {
+		t.Fatalf("timezone after rejected write = %q, want the UTC default", got)
+	}
+
+	n, err = q.SetTenantTimezone(ctx, db.SetTenantTimezoneParams{ID: tenant, Timezone: "Europe/Moscow"})
+	if err != nil {
+		t.Fatalf("SetTenantTimezone(Europe/Moscow): %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("SetTenantTimezone(Europe/Moscow) updated %d rows, want 1", n)
+	}
+	if got := readTZ(); got != "Europe/Moscow" {
+		t.Fatalf("timezone after valid write = %q, want Europe/Moscow", got)
+	}
+}
