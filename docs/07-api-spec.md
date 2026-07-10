@@ -124,6 +124,7 @@ GET    /staff/work-orders?date=&object_id=&status=
 PATCH  /staff/work-orders/{id}                 # reassign / reschedule
 ```
 Bulk create is how the "pre-generated schedule" works in slice 1: the admin (or a script) creates a week of orders in one call.
+The list returns at most 500 orders; narrow with `date`/`object_id`/`assignee_id`/`status` filters (cursor pagination will come if a real client needs it).
 
 ### Workers & invites
 ```
