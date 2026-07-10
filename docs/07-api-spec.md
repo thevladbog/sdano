@@ -7,11 +7,12 @@ Base path: `/api/v1`.
 ## Conventions
 
 - **IDs:** UUIDs. Mobile-created resources send their own `id` (client-generated, idempotent upsert on the server).
-- **Errors:** RFC 7807 `application/problem+json` (huma's default). Stable machine-readable `type` slugs, including: `invite-code-invalid`, `tenant-archived`, `tenant-suspended`, `rate-limited`, `work-order-not-assigned` (403), `execution-id-conflict` (409), `execution-item-conflict` (409), `qr-token-taken` (409), `invalid-checklist-item` (422), `execution-not-found` (404), `photo-not-found` (404), `photo-not-uploaded` (409), `photo-id-conflict` (409), `photo-already-uploaded` (409), `unsupported-content-type` (422), `qr-not-found` (404), `object-not-found` (404), `work-order-not-found` (404), `worker-not-found` (404), `invalid-cursor` (422), `invalid-reference` (422), `invalid-date` (422), `invalid-status` (422), `invalid-active` (422).
+- **Errors:** RFC 7807 `application/problem+json` (huma's default). Stable machine-readable `type` slugs, including: `invite-code-invalid`, `tenant-archived`, `tenant-suspended`, `rate-limited`, `work-order-not-assigned` (403), `execution-id-conflict` (409), `execution-item-conflict` (409), `qr-token-taken` (409), `invalid-checklist-item` (422), `execution-not-found` (404), `photo-not-found` (404), `photo-not-uploaded` (409), `photo-id-conflict` (409), `photo-already-uploaded` (409), `unsupported-content-type` (422), `qr-not-found` (404), `object-not-found` (404), `work-order-not-found` (404), `worker-not-found` (404), `invalid-cursor` (422), `invalid-reference` (422), `invalid-date` (422), `invalid-status` (422), `invalid-active` (422), `invalid-order-batch` (422).
 - **Timestamps:** RFC 3339 with offset. Mobile sends device-clock times explicitly where the field name says so.
 - **Idempotency:** all mobile POSTs are upserts keyed by client UUID. Replaying a request is always safe and returns 200 with the current state (not 409).
 - **Pagination:** cursor-based, `?cursor=...&limit=...`, response carries `next_cursor`. Only where lists can grow (executions, issues, photos).
 - **Auth transport:** `Authorization: Bearer <token>`. Two principal kinds: staff (admin/manager JWT + refresh) and worker (long-lived device token).
+- **Optional bodies:** where every body field is optional (`PATCH /staff/objects/{id}`, `PATCH /staff/work-orders/{id}`, `PATCH /staff/workers/{id}`, `POST /staff/workers/{id}/reinvite`), the body itself is optional — a request without one means "no changes / defaults" and returns current state.
 
 ## Auth
 
@@ -116,6 +117,7 @@ PATCH  /staff/objects/{id}
 GET    /staff/objects/{id}                     # card: recent executions, open issues
 GET    /staff/objects/{id}/executions?cursor   # history
 ```
+Object payloads carry `contract_id` (nullable) on every read — anything settable on an object is also readable back.
 
 ### Work orders
 ```
@@ -124,6 +126,7 @@ GET    /staff/work-orders?date=&object_id=&status=
 PATCH  /staff/work-orders/{id}                 # reassign / reschedule
 ```
 Bulk create is how the "pre-generated schedule" works in slice 1: the admin (or a script) creates a week of orders in one call.
+Every referenced id is validated against the tenant, and the whole batch fails atomically on the first problem (`422 invalid-reference`): unknown or cross-tenant object/version/assignee ids, inactive assignees, and **deactivated objects** — a deactivated object can't take new orders, since the assignee would see the order while the object's QR no longer resolves. A literal JSON `null` body (which satisfies the array schema but bypasses `minItems`) is rejected as `422 invalid-order-batch`.
 The list returns at most 500 orders; narrow with `date`/`object_id`/`assignee_id`/`status` filters (cursor pagination will come if a real client needs it).
 
 ### Workers & invites
