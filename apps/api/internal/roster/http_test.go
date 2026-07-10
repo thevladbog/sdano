@@ -132,4 +132,13 @@ func TestWorkerLifecycle(t *testing.T) {
 	if rec = adminDo(t, router, tenant, http.MethodPatch, "/api/v1/staff/workers/"+uuid.NewString(), `{"is_active":true}`); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown worker: got %d, want 404", rec.Code)
 	}
+	// Both bodies are all-optional, so a request without any body must not be
+	// rejected by the schema: reinvite defaults to not revoking tokens, and a
+	// body-less PATCH is a no-op returning current state (still deactivated).
+	if rec = adminDo(t, router, tenant, http.MethodPost, "/api/v1/staff/workers/"+workerID+"/reinvite", ""); rec.Code != http.StatusOK {
+		t.Errorf("body-less reinvite: got %d; body %s", rec.Code, rec.Body)
+	}
+	if rec = adminDo(t, router, tenant, http.MethodPatch, "/api/v1/staff/workers/"+workerID, ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"is_active":false`) {
+		t.Errorf("body-less patch: got %d; body %s", rec.Code, rec.Body)
+	}
 }

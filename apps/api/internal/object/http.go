@@ -24,15 +24,16 @@ import (
 )
 
 type Object struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name" example:"Lenina st., 45 — bus stop"`
-	Address   *string   `json:"address"`
-	Lat       *float64  `json:"lat"`
-	Lon       *float64  `json:"lon"`
-	Kind      *string   `json:"kind" example:"bus_stop"`
-	QRToken   *string   `json:"qr_token"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         uuid.UUID  `json:"id"`
+	Name       string     `json:"name" example:"Lenina st., 45 — bus stop"`
+	Address    *string    `json:"address"`
+	Lat        *float64   `json:"lat"`
+	Lon        *float64   `json:"lon"`
+	Kind       *string    `json:"kind" example:"bus_stop"`
+	QRToken    *string    `json:"qr_token"`
+	ContractID *uuid.UUID `json:"contract_id"`
+	IsActive   bool       `json:"is_active"`
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 type listOutput struct {
@@ -87,15 +88,16 @@ func Register(api huma.API, queries *db.Queries) {
 		out.Body.Objects = make([]Object, 0, len(rows))
 		for _, r := range rows {
 			out.Body.Objects = append(out.Body.Objects, Object{
-				ID:        r.ID,
-				Name:      r.Name,
-				Address:   r.Address,
-				Lat:       r.Lat,
-				Lon:       r.Lon,
-				Kind:      r.Kind,
-				QRToken:   r.QrToken,
-				IsActive:  r.IsActive,
-				CreatedAt: r.CreatedAt.Time,
+				ID:         r.ID,
+				Name:       r.Name,
+				Address:    r.Address,
+				Lat:        r.Lat,
+				Lon:        r.Lon,
+				Kind:       r.Kind,
+				QRToken:    r.QrToken,
+				ContractID: uuidPtr(r.ContractID),
+				IsActive:   r.IsActive,
+				CreatedAt:  r.CreatedAt.Time,
 			})
 		}
 		return out, nil
@@ -137,9 +139,12 @@ type createObjectInput struct {
 	Body objectBody
 }
 
+// patchObjectInput.Body is a pointer: every field is optional, so the body as
+// a whole is too (huma marks any non-pointer Body required in the schema and
+// rejects requests without one). A missing/empty body is a valid no-op patch.
 type patchObjectInput struct {
 	ID   string `path:"id"`
-	Body objectPatchBody
+	Body *objectPatchBody
 }
 
 type objectOutput struct {
@@ -153,6 +158,16 @@ func nullUUID(id *uuid.UUID) uuid.NullUUID {
 		return uuid.NullUUID{}
 	}
 	return uuid.NullUUID{UUID: *id, Valid: true}
+}
+
+// uuidPtr is nullUUID's inverse for reads: a nullable UUID column becomes a
+// *uuid.UUID, nil when the column is SQL NULL (no contract linked).
+func uuidPtr(v uuid.NullUUID) *uuid.UUID {
+	if !v.Valid {
+		return nil
+	}
+	u := v.UUID
+	return &u
 }
 
 // validateContractRef checks that a caller-supplied contract_id belongs to
@@ -218,7 +233,8 @@ func registerStaffObjectWrites(api huma.API, queries *db.Queries) {
 		}
 		return &objectOutput{Body: Object{
 			ID: row.ID, Name: row.Name, Address: row.Address, Lat: row.Lat, Lon: row.Lon,
-			Kind: row.Kind, QRToken: row.QrToken, IsActive: row.IsActive, CreatedAt: row.CreatedAt.Time,
+			Kind: row.Kind, QRToken: row.QrToken, ContractID: uuidPtr(row.ContractID),
+			IsActive: row.IsActive, CreatedAt: row.CreatedAt.Time,
 		}}, nil
 	})
 
@@ -237,18 +253,22 @@ func registerStaffObjectWrites(api huma.API, queries *db.Queries) {
 		if err != nil {
 			return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid object id")
 		}
-		if err := validateContractRef(ctx, queries, principal.TenantID, in.Body.ContractID); err != nil {
+		body := objectPatchBody{}
+		if in.Body != nil {
+			body = *in.Body
+		}
+		if err := validateContractRef(ctx, queries, principal.TenantID, body.ContractID); err != nil {
 			return nil, err
 		}
 		row, err := queries.UpdateObject(ctx, db.UpdateObjectParams{
-			Name:       in.Body.Name,
-			Address:    in.Body.Address,
-			Lat:        in.Body.Lat,
-			Lon:        in.Body.Lon,
-			Kind:       in.Body.Kind,
-			QrToken:    in.Body.QRToken,
-			ContractID: nullUUID(in.Body.ContractID),
-			IsActive:   in.Body.IsActive,
+			Name:       body.Name,
+			Address:    body.Address,
+			Lat:        body.Lat,
+			Lon:        body.Lon,
+			Kind:       body.Kind,
+			QrToken:    body.QRToken,
+			ContractID: nullUUID(body.ContractID),
+			IsActive:   body.IsActive,
 			ID:         id,
 			TenantID:   principal.TenantID,
 		})
@@ -263,7 +283,8 @@ func registerStaffObjectWrites(api huma.API, queries *db.Queries) {
 		}
 		return &objectOutput{Body: Object{
 			ID: row.ID, Name: row.Name, Address: row.Address, Lat: row.Lat, Lon: row.Lon,
-			Kind: row.Kind, QRToken: row.QrToken, IsActive: row.IsActive, CreatedAt: row.CreatedAt.Time,
+			Kind: row.Kind, QRToken: row.QrToken, ContractID: uuidPtr(row.ContractID),
+			IsActive: row.IsActive, CreatedAt: row.CreatedAt.Time,
 		}}, nil
 	})
 }
@@ -401,7 +422,8 @@ func registerStaffObjectReads(api huma.API, queries *db.Queries) {
 		out := &objectCardOutput{}
 		out.Body.Object = Object{
 			ID: obj.ID, Name: obj.Name, Address: obj.Address, Lat: obj.Lat, Lon: obj.Lon,
-			Kind: obj.Kind, QRToken: obj.QrToken, IsActive: obj.IsActive, CreatedAt: obj.CreatedAt.Time,
+			Kind: obj.Kind, QRToken: obj.QrToken, ContractID: uuidPtr(obj.ContractID),
+			IsActive: obj.IsActive, CreatedAt: obj.CreatedAt.Time,
 		}
 		out.Body.RecentExecutions = make([]objectExecutionView, 0, len(rows))
 		for _, r := range rows {
