@@ -46,11 +46,13 @@ sdano-ops tenant create --name "ЧистоГрад" --trial-days 30
     → creates tenant + first admin user, prints credentials + invite instructions
 
 sdano-ops tenant list
-    → table: name, status, workers (active/total), executions last 7d,
-      photos count / storage GB, billed_until, trial_ends_at
+    → table: id, name, status, active workers, active objects, trial_ends_at,
+      billed_until, suspended_at (execution/photo/storage stats: phase-A deferred)
 
 sdano-ops tenant suspend --id <uuid> [--note "..."]
 sdano-ops tenant activate --id <uuid>
+    → sets status to 'active' unconditionally — a suspended trial tenant
+      comes back as active, not trial; trial does not resume
 sdano-ops tenant set-billing --id <uuid> --billed-until 2026-09-01 [--plan-note "..."]
     → omitting --plan-note keeps the existing note (the audit row records
       only what was actually applied)
@@ -60,11 +62,13 @@ sdano-ops tenant archive ...
       in this document still apply once it ships.
 
 sdano-ops stats
-    → platform totals: tenants by status, executions/day trend, storage, top tenants by usage
+    → phase-A deferred: not yet in the CLI. Design: platform totals: tenants
+      by status, executions/day trend, storage, top tenants by usage.
 
 sdano-ops export-tenant <id> --out ./export/
-    → full data export (JSON + photo manifest) — the archived-tenant obligation,
-      also the GDPR/152-FZ "give me my data" answer
+    → phase-A deferred: not yet in the CLI. Design: full data export (JSON +
+      photo manifest) — the archived-tenant obligation, also the GDPR/152-FZ
+      "give me my data" answer.
 ```
 
 Implementation notes: reuses the domain packages and sqlc queries (no parallel logic); every mutating command writes an `ops_audit` row (what, when, note) — the operator is not above the audit discipline. Tenant ids are passed as `--id` flags rather than positional arguments: the CLI is stdlib `flag` only (no cobra), and `flag` stops parsing at the first positional token, so a uniform all-flags style is the simple correct shape.

@@ -34,7 +34,10 @@ type ClaimNextReportRow struct {
 }
 
 // Worker-internal: drains the queue across ALL tenants (single in-process
-// worker). SKIP LOCKED lets a future second instance coexist safely.
+// worker). SKIP LOCKED lets a future second instance coexist safely. Caveat:
+// before a second instance ships, FailExhaustedReports needs a staleness
+// guard — as written it could fail a row whose third render is legitimately
+// in flight on another instance.
 func (q *Queries) ClaimNextReport(ctx context.Context) (ClaimNextReportRow, error) {
 	row := q.db.QueryRow(ctx, claimNextReport)
 	var i ClaimNextReportRow

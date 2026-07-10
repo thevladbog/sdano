@@ -14,7 +14,10 @@ ORDER BY created_at DESC LIMIT 100;
 
 -- name: ClaimNextReport :one
 -- Worker-internal: drains the queue across ALL tenants (single in-process
--- worker). SKIP LOCKED lets a future second instance coexist safely.
+-- worker). SKIP LOCKED lets a future second instance coexist safely. Caveat:
+-- before a second instance ships, FailExhaustedReports needs a staleness
+-- guard — as written it could fail a row whose third render is legitimately
+-- in flight on another instance.
 UPDATE report SET render_attempts = render_attempts + 1
 WHERE id = (
     SELECT id FROM report
