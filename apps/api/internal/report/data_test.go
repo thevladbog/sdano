@@ -63,7 +63,9 @@ func seedReportFixture(t *testing.T, pool *pgxpool.Pool) reportFixture {
 	item1, item2 := uuid.New(), uuid.New()
 	order1, order2, order3, order4, order5 := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 
-	must(`INSERT INTO tenant (id, name) VALUES ($1, 'Acme')`, f.tenant)
+	// Non-UTC timezone (UTC+3): times below are seeded in UTC and asserted as
+	// Moscow wall clock, proving conversion rather than echoing.
+	must(`INSERT INTO tenant (id, name, timezone) VALUES ($1, 'Acme', 'Europe/Moscow')`, f.tenant)
 	must(`INSERT INTO app_user (id, tenant_id, role, display_name) VALUES ($1,$2,'worker','Алексей Петров')`, worker, f.tenant)
 	must(`INSERT INTO contract (id, tenant_id, name, client_name) VALUES ($1,$2,'Договор №1','Администрация')`, f.contract1, f.tenant)
 	must(`INSERT INTO contract (id, tenant_id, name, client_name) VALUES ($1,$2,'Договор №2','Другой клиент')`, f.contract2, f.tenant)
@@ -189,8 +191,10 @@ func TestBuildReportData(t *testing.T) {
 	if job1.CheckedItems != 2 || job1.TotalItems != 2 {
 		t.Errorf("object1 job CheckedItems/TotalItems = %d/%d, want 2/2", job1.CheckedItems, job1.TotalItems)
 	}
-	if job1.FinishedAt != "08:42" {
-		t.Errorf("object1 job FinishedAt = %q, want 08:42 (device time, HH:MM)", job1.FinishedAt)
+	// Seeded 08:42Z; the tenant is Europe/Moscow (UTC+3) — the report must
+	// print the tenant-local wall clock the worker and inspector live in.
+	if job1.FinishedAt != "11:42" {
+		t.Errorf("object1 job FinishedAt = %q, want 11:42 (device time 08:42Z in Europe/Moscow)", job1.FinishedAt)
 	}
 	if job1.Date != "05.06.2026" {
 		t.Errorf("object1 job Date = %q, want 05.06.2026", job1.Date)
@@ -202,22 +206,22 @@ func TestBuildReportData(t *testing.T) {
 	if len(job1.Photos) != 2 {
 		t.Fatalf("object1 job Photos len = %d, want 2", len(job1.Photos))
 	}
-	var sawConfirmed, sawMissing bool
-	for _, p := range job1.Photos {
-		if p.Missing {
-			sawMissing = true
-			if p.DataURI != "" {
-				t.Errorf("missing photo cell must not carry a DataURI, got %q", p.DataURI)
-			}
-		} else {
-			sawConfirmed = true
-			if p.DataURI == "" {
-				t.Errorf("confirmed photo cell must carry a DataURI")
-			}
-		}
+	// Order is pinned: 'before' precedes 'after' (photo_kind enum declaration
+	// order drives ReportExecutionPhotos' ORDER BY kind — docs/09 reading
+	// order). The seeded 'before' photo is the unconfirmed one.
+	before, after := job1.Photos[0], job1.Photos[1]
+	if !before.Missing {
+		t.Errorf("Photos[0] must be the unconfirmed 'before' photo (Missing:true), got %+v", before)
 	}
-	if !sawConfirmed || !sawMissing {
-		t.Errorf("expected one confirmed and one missing photo cell, got %+v", job1.Photos)
+	if before.DataURI != "" {
+		t.Errorf("missing photo cell must not carry a DataURI, got %q", before.DataURI)
+	}
+	if after.Missing || after.DataURI == "" {
+		t.Errorf("Photos[1] must be the confirmed 'after' photo with a DataURI, got %+v", after)
+	}
+	// Caption: taken_at 08:41Z in Europe/Moscow, then coordinates.
+	if after.Caption != "11:41 · 55.75800, 37.61730" {
+		t.Errorf("after photo Caption = %q, want 11:41 · 55.75800, 37.61730", after.Caption)
 	}
 	if loaderCalls != 1 {
 		t.Errorf("loaderCalls = %d, want 1 (loader must not be called for unconfirmed photos)", loaderCalls)
@@ -247,6 +251,52 @@ func TestBuildReportData(t *testing.T) {
 	}
 	if data.ContractName != "Договор №1" || data.ClientName != "Администрация" {
 		t.Errorf("ContractName/ClientName = %q/%q, want Договор №1/Администрация", data.ContractName, data.ClientName)
+	}
+	// GeneratedAt appears on the cover — it must carry the tenant zone so the
+	// template prints the tenant-local generation date.
+	if got := data.GeneratedAt.Location().String(); got != "Europe/Moscow" {
+		t.Errorf("GeneratedAt location = %q, want Europe/Moscow", got)
+	}
+}
+
+// TestBuildReportDataUTCFallback proves times render as-stored (UTC) for a
+// tenant left on the default 'UTC' timezone.
+func TestBuildReportDataUTCFallback(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	must := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	tenant, worker := uuid.New(), uuid.New()
+	object, tmpl, version, order, exec := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	// No explicit timezone: column default is 'UTC' (migration 0003).
+	must(`INSERT INTO tenant (id, name) VALUES ($1, 'UTC Co')`, tenant)
+	must(`INSERT INTO app_user (id, tenant_id, role, display_name) VALUES ($1,$2,'worker','W')`, worker, tenant)
+	must(`INSERT INTO object (id, tenant_id, name, address) VALUES ($1,$2,'O','A')`, object, tenant)
+	must(`INSERT INTO checklist_template (id, tenant_id, name) VALUES ($1,$2,'T')`, tmpl, tenant)
+	must(`INSERT INTO checklist_template_version (id, template_id, version) VALUES ($1,$2,1)`, version, tmpl)
+	must(`INSERT INTO work_order (id, tenant_id, object_id, version_id, assignee_id, due_date, status) VALUES ($1,$2,$3,$4,$5,'2026-06-05','done')`,
+		order, tenant, object, version, worker)
+	must(`INSERT INTO work_execution (id, tenant_id, work_order_id, worker_id, device_finished_at, finished_at) VALUES ($1,$2,$3,$4,'2026-06-05T10:30:00Z','2026-06-05T10:31:00Z')`,
+		exec, tenant, order, worker)
+
+	data, err := report.BuildReportData(ctx, db.New(pool), report.ClaimedReport{
+		ID:         uuid.New(),
+		TenantID:   tenant,
+		PeriodFrom: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+		PeriodTo:   time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC),
+	}, fakeLoader(new(int)))
+	if err != nil {
+		t.Fatalf("BuildReportData: %v", err)
+	}
+	if len(data.Objects) != 1 || len(data.Objects[0].Jobs) != 1 {
+		t.Fatalf("Objects/Jobs shape unexpected: %+v", data.Objects)
+	}
+	if got := data.Objects[0].Jobs[0].FinishedAt; got != "10:30" {
+		t.Errorf("FinishedAt = %q, want 10:30 (stored 10:30Z, tenant tz UTC)", got)
 	}
 }
 

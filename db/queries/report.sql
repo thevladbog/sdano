@@ -33,8 +33,10 @@ WHERE id = $1 AND status = 'generating';
 UPDATE report SET status = 'failed', failure_reason = $2
 WHERE id = $1 AND status = 'generating';
 
--- name: GetTenantName :one
-SELECT name FROM tenant WHERE id = $1;
+-- name: GetTenantForReport :one
+-- timezone: report times (job completion, photo captions) print in the
+-- tenant's local wall clock — the zone the inspector and the worker live in.
+SELECT name, timezone FROM tenant WHERE id = $1;
 
 -- name: GetContractName :one
 SELECT name, client_name FROM contract WHERE id = $1 AND tenant_id = $2;
@@ -68,6 +70,9 @@ WHERE e.tenant_id = sqlc.arg(tenant_id)
 ORDER BY wo.object_id, e.device_finished_at;
 
 -- name: ReportExecutionPhotos :many
+-- kind ASC sorts by photo_kind's DECLARATION order (Postgres enum semantics,
+-- not alphabetical): before, after, defect, resolution — before precedes
+-- after in the report's photo grid (docs/09).
 SELECT execution_id, id, kind, s3_key, taken_at, lat, lon, uploaded_at
 FROM photo
 WHERE tenant_id = sqlc.arg(tenant_id)

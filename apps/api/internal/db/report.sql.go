@@ -109,15 +109,22 @@ func (q *Queries) GetReport(ctx context.Context, arg GetReportParams) (GetReport
 	return i, err
 }
 
-const getTenantName = `-- name: GetTenantName :one
-SELECT name FROM tenant WHERE id = $1
+const getTenantForReport = `-- name: GetTenantForReport :one
+SELECT name, timezone FROM tenant WHERE id = $1
 `
 
-func (q *Queries) GetTenantName(ctx context.Context, id uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, getTenantName, id)
-	var name string
-	err := row.Scan(&name)
-	return name, err
+type GetTenantForReportRow struct {
+	Name     string
+	Timezone string
+}
+
+// timezone: report times (job completion, photo captions) print in the
+// tenant's local wall clock — the zone the inspector and the worker live in.
+func (q *Queries) GetTenantForReport(ctx context.Context, id uuid.UUID) (GetTenantForReportRow, error) {
+	row := q.db.QueryRow(ctx, getTenantForReport, id)
+	var i GetTenantForReportRow
+	err := row.Scan(&i.Name, &i.Timezone)
+	return i, err
 }
 
 const insertReport = `-- name: InsertReport :one
@@ -251,6 +258,9 @@ type ReportExecutionPhotosRow struct {
 	UploadedAt  pgtype.Timestamptz
 }
 
+// kind ASC sorts by photo_kind's DECLARATION order (Postgres enum semantics,
+// not alphabetical): before, after, defect, resolution — before precedes
+// after in the report's photo grid (docs/09).
 func (q *Queries) ReportExecutionPhotos(ctx context.Context, arg ReportExecutionPhotosParams) ([]ReportExecutionPhotosRow, error) {
 	rows, err := q.db.Query(ctx, reportExecutionPhotos, arg.TenantID, arg.ExecutionIds)
 	if err != nil {

@@ -119,9 +119,20 @@ func BuildReportData(ctx context.Context, q *db.Queries, r ClaimedReport, photoL
 	periodFrom := pgtype.Date{Time: r.PeriodFrom, Valid: true}
 	periodTo := pgtype.Date{Time: r.PeriodTo, Valid: true}
 
-	tenantName, err := q.GetTenantName(ctx, r.TenantID)
+	tenant, err := q.GetTenantForReport(ctx, r.TenantID)
 	if err != nil {
-		return ReportData{}, fmt.Errorf("loading tenant name: %w", err)
+		return ReportData{}, fmt.Errorf("loading tenant: %w", err)
+	}
+	// Report times (job completion, photo captions, generation date) print in
+	// the tenant's wall clock — the zone the worker and the inspector live in
+	// (docs/09: "completion time (device time)"). tenant.timezone is validated
+	// at write time and defaults to 'UTC' (migration 0003), so a load failure
+	// is a can't-happen; fall back to UTC silently rather than fail the render.
+	// Determinism holds either way: same stored instant + same tenant timezone
+	// → same output on any render host.
+	loc, locErr := time.LoadLocation(tenant.Timezone)
+	if locErr != nil {
+		loc = time.UTC
 	}
 
 	var contractName, clientName string
@@ -173,20 +184,22 @@ func BuildReportData(ctx context.Context, q *db.Queries, r ClaimedReport, photoL
 			continue
 		}
 		job := JobRow{
+			// Date comes from a pgtype.Date (UTC-midnight, no instant
+			// semantics) — formatted as stored, never zone-converted: shifting
+			// a calendar date through a timezone could move it to the
+			// neighboring day.
 			Date: e.DueDate.Time.Format(dateLayout),
-			// pgx decodes timestamptz into a time.Time located in the
-			// process's local zone (time.Unix's default), not UTC — without
-			// .UTC() here, the same stored instant would render a different
-			// clock reading depending on the render worker's host timezone.
-			// Reports are immutable evidence; the printed time must be
-			// deterministic regardless of where the renderer runs.
-			FinishedAt:   e.DeviceFinishedAt.Time.UTC().Format(timeLayout),
+			// .In(loc), never bare .Format: pgx decodes timestamptz into the
+			// process's LOCAL zone, so formatting without an explicit zone
+			// would print a different clock reading depending on the render
+			// host. Reports are immutable evidence — pin the tenant zone.
+			FinishedAt:   e.DeviceFinishedAt.Time.In(loc).Format(timeLayout),
 			WorkerName:   e.WorkerName,
 			CheckedItems: int(e.CheckedItems),
 			TotalItems:   int(e.TotalItems),
 		}
 		for _, p := range photosByExecution[e.ExecutionID] {
-			cell, err := buildPhotoCell(ctx, p, photoLoad)
+			cell, err := buildPhotoCell(ctx, p, loc, photoLoad)
 			if err != nil {
 				return ReportData{}, err
 			}
@@ -208,12 +221,12 @@ func BuildReportData(ctx context.Context, q *db.Queries, r ClaimedReport, photoL
 
 	return ReportData{
 		ShortID:      ShortIDFor(r.ID),
-		TenantName:   tenantName,
+		TenantName:   tenant.Name,
 		ContractName: contractName,
 		ClientName:   clientName,
 		PeriodFrom:   r.PeriodFrom,
 		PeriodTo:     r.PeriodTo,
-		GeneratedAt:  time.Now().UTC(),
+		GeneratedAt:  time.Now().In(loc),
 		Summary:      summary,
 		Objects:      objects,
 		Missed:       missed,
@@ -291,7 +304,7 @@ func loadPhotosByExecution(ctx context.Context, q *db.Queries, tenantID uuid.UUI
 
 // buildPhotoCell converts one photo row into a PhotoCell. Unconfirmed
 // uploads never reach photoLoad.
-func buildPhotoCell(ctx context.Context, p db.ReportExecutionPhotosRow, photoLoad PhotoLoader) (PhotoCell, error) {
+func buildPhotoCell(ctx context.Context, p db.ReportExecutionPhotosRow, loc *time.Location, photoLoad PhotoLoader) (PhotoCell, error) {
 	if !p.UploadedAt.Valid {
 		return PhotoCell{Missing: true}, nil
 	}
@@ -299,14 +312,15 @@ func buildPhotoCell(ctx context.Context, p db.ReportExecutionPhotosRow, photoLoa
 	if err != nil {
 		return PhotoCell{}, fmt.Errorf("loading photo %s: %w", p.ID, err)
 	}
-	return PhotoCell{DataURI: dataURI, Caption: photoCaption(p)}, nil
+	return PhotoCell{DataURI: dataURI, Caption: photoCaption(p, loc)}, nil
 }
 
-// photoCaption renders "HH:MM · lat, lon", skipping coordinates when absent.
-func photoCaption(p db.ReportExecutionPhotosRow) string {
+// photoCaption renders "HH:MM · lat, lon" (capture time in the tenant's
+// zone), skipping coordinates when absent.
+func photoCaption(p db.ReportExecutionPhotosRow, loc *time.Location) string {
 	caption := ""
 	if p.TakenAt.Valid {
-		caption = p.TakenAt.Time.UTC().Format(timeLayout)
+		caption = p.TakenAt.Time.In(loc).Format(timeLayout)
 	}
 	if p.Lat != nil && p.Lon != nil {
 		coords := fmt.Sprintf("%.5f, %.5f", *p.Lat, *p.Lon)

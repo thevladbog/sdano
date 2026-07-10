@@ -28,10 +28,16 @@ func safeURL(s string) template.URL {
 // (dates 02.01.2006, times 15:04); this covers the top-level ReportData
 // fields (PeriodFrom, PeriodTo, GeneratedAt) that stay time.Time so the
 // template — not data.go — owns their on-page formatting.
+//
+// Formats in the value's OWN location, deliberately: BuildReportData pins
+// GeneratedAt to the tenant's timezone, and PeriodFrom/PeriodTo are
+// UTC-midnight calendar dates (pgtype.Date) — forcing any zone here would
+// either undo the tenant-local generation date or shift a period boundary
+// onto the neighboring day. Deterministic because every producer
+// (BuildReportData, PreviewFixture) constructs these values with an explicit
+// zone — never the render host's local one.
 func formatDate(t time.Time) string {
-	// .UTC() so the printed date never drifts with the render host's local
-	// timezone (see data.go's identical rationale for FinishedAt/captions).
-	return t.UTC().Format("02.01.2006")
+	return t.Format("02.01.2006")
 }
 
 var reportTmpl = template.Must(template.New("report.html").Funcs(template.FuncMap{
