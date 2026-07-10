@@ -35,5 +35,12 @@ WHERE id = $1;
 -- name: InsertOpsAudit :exec
 INSERT INTO ops_audit (action, tenant_id, detail) VALUES ($1, $2, $3);
 
+-- name: OpsInsertAdminUser :one
+-- The operator CLI's only user-creation path: OpsCreateTenant's first admin.
+-- Role is hardcoded 'admin' -- ops never creates any other role.
+INSERT INTO app_user (tenant_id, role, display_name, email, password_hash)
+VALUES ($1, 'admin', $2, $3, $4)
+RETURNING id;
+
 -- name: GetTenantSuspension :one
 SELECT suspended_at FROM tenant WHERE id = $1;

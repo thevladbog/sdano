@@ -125,6 +125,33 @@ func (q *Queries) OpsCreateTenant(ctx context.Context, arg OpsCreateTenantParams
 	return i, err
 }
 
+const opsInsertAdminUser = `-- name: OpsInsertAdminUser :one
+INSERT INTO app_user (tenant_id, role, display_name, email, password_hash)
+VALUES ($1, 'admin', $2, $3, $4)
+RETURNING id
+`
+
+type OpsInsertAdminUserParams struct {
+	TenantID     uuid.UUID
+	DisplayName  string
+	Email        *string
+	PasswordHash *string
+}
+
+// The operator CLI's only user-creation path: OpsCreateTenant's first admin.
+// Role is hardcoded 'admin' -- ops never creates any other role.
+func (q *Queries) OpsInsertAdminUser(ctx context.Context, arg OpsInsertAdminUserParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, opsInsertAdminUser,
+		arg.TenantID,
+		arg.DisplayName,
+		arg.Email,
+		arg.PasswordHash,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const opsListTenants = `-- name: OpsListTenants :many
 SELECT t.id, t.name, t.status, t.timezone, t.trial_ends_at, t.billed_until, t.suspended_at,
        (SELECT count(*) FROM app_user u WHERE u.tenant_id = t.id AND u.role = 'worker' AND u.is_active) AS active_workers,
