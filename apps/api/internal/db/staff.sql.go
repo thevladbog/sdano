@@ -492,10 +492,16 @@ func (q *Queries) ListDashboardOrders(ctx context.Context, arg ListDashboardOrde
 const listExecutionItemsWithTitles = `-- name: ListExecutionItemsWithTitles :many
 SELECT ei.id, ei.template_item_id, ei.checked, ei.checked_at, ti.position, ti.title
 FROM work_execution_item ei
+JOIN work_execution e ON e.id = ei.execution_id AND e.tenant_id = $1
 JOIN checklist_template_item ti ON ti.id = ei.template_item_id
-WHERE ei.execution_id = $1
+WHERE ei.execution_id = $2
 ORDER BY ti.position
 `
+
+type ListExecutionItemsWithTitlesParams struct {
+	TenantID    uuid.UUID
+	ExecutionID uuid.UUID
+}
 
 type ListExecutionItemsWithTitlesRow struct {
 	ID             uuid.UUID
@@ -506,8 +512,8 @@ type ListExecutionItemsWithTitlesRow struct {
 	Title          string
 }
 
-func (q *Queries) ListExecutionItemsWithTitles(ctx context.Context, executionID uuid.UUID) ([]ListExecutionItemsWithTitlesRow, error) {
-	rows, err := q.db.Query(ctx, listExecutionItemsWithTitles, executionID)
+func (q *Queries) ListExecutionItemsWithTitles(ctx context.Context, arg ListExecutionItemsWithTitlesParams) ([]ListExecutionItemsWithTitlesRow, error) {
+	rows, err := q.db.Query(ctx, listExecutionItemsWithTitles, arg.TenantID, arg.ExecutionID)
 	if err != nil {
 		return nil, err
 	}

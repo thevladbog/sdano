@@ -324,3 +324,56 @@ func TestStaffDashboard(t *testing.T) {
 		}
 	}
 }
+
+func TestStaffDashboardOverduePastDate(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, worker := uuid.New(), uuid.New()
+	tmpl, version := uuid.New(), uuid.New()
+	obj := uuid.New()
+	order := uuid.New()
+	must := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	must(`INSERT INTO tenant (id,name) VALUES ($1,'Acme')`, tenant)
+	must(`INSERT INTO app_user (id,tenant_id,role,display_name) VALUES ($1,$2,'worker','Alexey')`, worker, tenant)
+	must(`INSERT INTO object (id,tenant_id,name) VALUES ($1,$2,'Overdue stop')`, obj, tenant)
+	must(`INSERT INTO checklist_template (id,tenant_id,name) VALUES ($1,$2,'T')`, tmpl, tenant)
+	must(`INSERT INTO checklist_template_version (id,template_id,version) VALUES ($1,$2,1)`, version, tmpl)
+	// Tenant tz defaults to UTC, so "yesterday" in Go matches tenant-local
+	// yesterday. due_date is in the past and status stays scheduled (the
+	// phase-6 nightly job would later flip it to missed, but this endpoint
+	// must already surface it as overdue before that job runs).
+	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	must(`INSERT INTO work_order (id,tenant_id,object_id,version_id,assignee_id,due_date,status) VALUES ($1,$2,$3,$4,$5,$6::date,'scheduled')`, order, tenant, obj, version, worker, yesterday)
+
+	router, _ := app.New(config.Config{JWTSecret: testSecret}, app.Deps{Pool: pool})
+	admin := bearerAs2(t, tenant, uuid.New(), auth.RoleAdmin)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/staff/dashboard?date="+yesterday, nil)
+	req.Header.Set("Authorization", admin)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard: got %d; body %s", rec.Code, rec.Body)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"overdue":1`) {
+		t.Errorf("dashboard missing overdue:1 for past-due scheduled order; body: %s", body)
+	}
+
+	// A garbage date must 422 with the invalid-date problem slug, never fall
+	// through to tenant-local today.
+	reqBad := httptest.NewRequest(http.MethodGet, "/api/v1/staff/dashboard?date=garbage", nil)
+	reqBad.Header.Set("Authorization", admin)
+	recBad := httptest.NewRecorder()
+	router.ServeHTTP(recBad, reqBad)
+	if recBad.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("bad date: got %d; body %s", recBad.Code, recBad.Body)
+	}
+	if !strings.Contains(recBad.Body.String(), "invalid-date") {
+		t.Errorf("bad date body missing invalid-date; body: %s", recBad.Body)
+	}
+}

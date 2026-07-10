@@ -141,8 +141,9 @@ WHERE e.id = $1 AND e.tenant_id = $2;
 -- name: ListExecutionItemsWithTitles :many
 SELECT ei.id, ei.template_item_id, ei.checked, ei.checked_at, ti.position, ti.title
 FROM work_execution_item ei
+JOIN work_execution e ON e.id = ei.execution_id AND e.tenant_id = sqlc.arg(tenant_id)
 JOIN checklist_template_item ti ON ti.id = ei.template_item_id
-WHERE ei.execution_id = $1
+WHERE ei.execution_id = sqlc.arg(execution_id)
 ORDER BY ti.position;
 
 -- name: GetPhotoForStaff :one

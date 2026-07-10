@@ -95,7 +95,7 @@ ORDER BY id;
 -- name: ListExecutionPhotos :many
 SELECT id, kind, s3_key, taken_at, lat, lon, uploaded_at
 FROM photo
-WHERE execution_id = $1
+WHERE execution_id = sqlc.arg(execution_id) AND tenant_id = sqlc.arg(tenant_id)
 ORDER BY id;
 
 -- === photos (two-phase) ====================================================

@@ -453,9 +453,6 @@ func registerStaffOrders(api huma.API, pool *pgxpool.Pool) {
 		if perr != nil {
 			return nil, perr
 		}
-		if err := validateOrderReferences(ctx, q, principal.TenantID, objectIDs, versionIDs, assigneeIDs); err != nil {
-			return nil, err
-		}
 
 		tx, err := pool.Begin(ctx)
 		if err != nil {
@@ -463,6 +460,15 @@ func registerStaffOrders(api huma.API, pool *pgxpool.Pool) {
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 		qtx := q.WithTx(tx)
+
+		// Reference validation runs inside the transaction (against qtx, not
+		// the outer q) so it observes the same snapshot as the inserts below:
+		// a worker/object/version deactivated or reassigned to another tenant
+		// concurrently with this batch can't validate here and then vanish
+		// (or vice versa) before the inserts commit.
+		if err := validateOrderReferences(ctx, qtx, principal.TenantID, objectIDs, versionIDs, assigneeIDs); err != nil {
+			return nil, err
+		}
 
 		ids := make([]uuid.UUID, 0, len(parsed))
 		for _, p := range parsed {
@@ -641,12 +647,13 @@ type staffExecutionDetailOutput struct {
 // checklist items (with titles) and photo evidence for one execution, with a
 // presigned GET URL for every confirmed photo.
 //
-// GetExecutionDetail is the only tenant-scoped lookup of the three queries
-// this handler runs — ListExecutionItemsWithTitles and ListExecutionPhotos
-// both take a bare executionID with no tenant filter. GetExecutionDetail
-// MUST run first and 404 on a miss before either of those queries touches
-// the id, otherwise a staff principal from tenant A could read tenant B's
-// checklist items and photos for a guessed/enumerated execution id.
+// All three queries are tenant-scoped in SQL now (ListExecutionItemsWithTitles
+// joins through work_execution on tenant_id; ListExecutionPhotos filters
+// photo.tenant_id directly), so a guessed/enumerated execution id from
+// another tenant cannot leak items or photos even if called out of order.
+// GetExecutionDetail still runs first and 404s on a miss — defense in depth,
+// not the only line of defense — so a cross-tenant id gets a clean 404
+// instead of an (also-safe, but less friendly) empty items/photos list.
 func registerStaffExecutionDetail(api huma.API, q *db.Queries, store photo.ObjectStore) {
 	huma.Register(api, huma.Operation{
 		OperationID: "getStaffExecution",
@@ -671,11 +678,17 @@ func registerStaffExecutionDetail(api huma.API, q *db.Queries, store photo.Objec
 			return nil, fmt.Errorf("loading execution detail: %w", err)
 		}
 
-		items, err := q.ListExecutionItemsWithTitles(ctx, execID)
+		items, err := q.ListExecutionItemsWithTitles(ctx, db.ListExecutionItemsWithTitlesParams{
+			ExecutionID: execID,
+			TenantID:    p.TenantID,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("loading execution items: %w", err)
 		}
-		photos, err := q.ListExecutionPhotos(ctx, uuid.NullUUID{UUID: execID, Valid: true})
+		photos, err := q.ListExecutionPhotos(ctx, db.ListExecutionPhotosParams{
+			ExecutionID: uuid.NullUUID{UUID: execID, Valid: true},
+			TenantID:    p.TenantID,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("loading execution photos: %w", err)
 		}

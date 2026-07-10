@@ -414,9 +414,14 @@ func (q *Queries) ListExecutionItems(ctx context.Context, executionID uuid.UUID)
 const listExecutionPhotos = `-- name: ListExecutionPhotos :many
 SELECT id, kind, s3_key, taken_at, lat, lon, uploaded_at
 FROM photo
-WHERE execution_id = $1
+WHERE execution_id = $1 AND tenant_id = $2
 ORDER BY id
 `
+
+type ListExecutionPhotosParams struct {
+	ExecutionID uuid.NullUUID
+	TenantID    uuid.UUID
+}
 
 type ListExecutionPhotosRow struct {
 	ID         uuid.UUID
@@ -428,8 +433,8 @@ type ListExecutionPhotosRow struct {
 	UploadedAt pgtype.Timestamptz
 }
 
-func (q *Queries) ListExecutionPhotos(ctx context.Context, executionID uuid.NullUUID) ([]ListExecutionPhotosRow, error) {
-	rows, err := q.db.Query(ctx, listExecutionPhotos, executionID)
+func (q *Queries) ListExecutionPhotos(ctx context.Context, arg ListExecutionPhotosParams) ([]ListExecutionPhotosRow, error) {
+	rows, err := q.db.Query(ctx, listExecutionPhotos, arg.ExecutionID, arg.TenantID)
 	if err != nil {
 		return nil, err
 	}

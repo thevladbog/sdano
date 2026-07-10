@@ -234,7 +234,10 @@ func loadExecutionView(ctx context.Context, q *db.Queries, tenantID, executionID
 	if err != nil {
 		return ExecutionView{}, fmt.Errorf("loading items: %w", err)
 	}
-	photos, err := q.ListExecutionPhotos(ctx, uuid.NullUUID{UUID: executionID, Valid: true})
+	photos, err := q.ListExecutionPhotos(ctx, db.ListExecutionPhotosParams{
+		ExecutionID: uuid.NullUUID{UUID: executionID, Valid: true},
+		TenantID:    tenantID,
+	})
 	if err != nil {
 		return ExecutionView{}, fmt.Errorf("loading photos: %w", err)
 	}
