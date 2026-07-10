@@ -2,6 +2,7 @@ package photo_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -370,6 +371,32 @@ func TestStaffPhotoURLAndExecutionDetail(t *testing.T) {
 	for _, want := range []string{`"worker_name"`, photoID.String(), `"uploaded":true`, photo2.String(), `"uploaded":false`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("exec detail missing %q; body: %s", want, body)
+		}
+	}
+	// The unconfirmed photo must carry no url key at all (not even url:null —
+	// the schema promises the key only appears once bytes are in S3), while
+	// the confirmed one must have it.
+	var detail struct {
+		Photos []map[string]json.RawMessage `json:"photos"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decoding exec detail: %v", err)
+	}
+	for _, ph := range detail.Photos {
+		var id string
+		if err := json.Unmarshal(ph["id"], &id); err != nil {
+			t.Fatalf("decoding photo id: %v", err)
+		}
+		_, hasURL := ph["url"]
+		switch id {
+		case photoID.String():
+			if !hasURL {
+				t.Error("confirmed photo must carry a url")
+			}
+		case photo2.String():
+			if hasURL {
+				t.Errorf("unconfirmed photo must not carry a url key; got %s", ph["url"])
+			}
 		}
 	}
 	// Unknown execution -> 404.

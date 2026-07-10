@@ -826,6 +826,9 @@
               "null"
             ]
           },
+          "contract_id": {
+            "type": "string"
+          },
           "created_at": {
             "format": "date-time",
             "type": "string"
@@ -880,6 +883,7 @@
           "lon",
           "kind",
           "qr_token",
+          "contract_id",
           "is_active",
           "created_at"
         ],
@@ -1097,13 +1101,13 @@
         },
         "type": "object"
       },
-      "PatchWorkerInputBody": {
+      "PatchWorkerBody": {
         "additionalProperties": false,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
             "examples": [
-              "https://example.com/schemas/PatchWorkerInputBody.json"
+              "https://example.com/schemas/PatchWorkerBody.json"
             ],
             "format": "uri",
             "readOnly": true,
@@ -1363,13 +1367,13 @@
         ],
         "type": "object"
       },
-      "ReinviteWorkerInputBody": {
+      "ReinviteWorkerBody": {
         "additionalProperties": false,
         "properties": {
           "$schema": {
             "description": "A URL to the JSON Schema for this object.",
             "examples": [
-              "https://example.com/schemas/ReinviteWorkerInputBody.json"
+              "https://example.com/schemas/ReinviteWorkerBody.json"
             ],
             "format": "uri",
             "readOnly": true,
@@ -2226,8 +2230,7 @@
                 "$ref": "#/components/schemas/ObjectPatchBody"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -2492,8 +2495,7 @@
                 "$ref": "#/components/schemas/PatchOrderBody"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -2610,11 +2612,10 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PatchWorkerInputBody"
+                "$ref": "#/components/schemas/PatchWorkerBody"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -2661,11 +2662,10 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReinviteWorkerInputBody"
+                "$ref": "#/components/schemas/ReinviteWorkerBody"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {

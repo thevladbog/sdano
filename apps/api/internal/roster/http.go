@@ -116,7 +116,7 @@ func Register(api huma.API, pool *pgxpool.Pool) {
 		// leaving stale tokens authenticated alongside a fresh code. A single tx is
 		// deliberately not used — CreateInvite's unique-violation retry loop would
 		// abort a surrounding transaction without savepoint plumbing.
-		if in.Body.RevokeTokens {
+		if in.Body != nil && in.Body.RevokeTokens {
 			if err := q.RevokeWorkerDeviceTokens(ctx, db.RevokeWorkerDeviceTokensParams{TenantID: principal.TenantID, UserID: id}); err != nil {
 				return nil, fmt.Errorf("revoking device tokens for worker %s: %w", id, err)
 			}
@@ -146,9 +146,13 @@ func Register(api huma.API, pool *pgxpool.Pool) {
 		if err != nil {
 			return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid worker id")
 		}
+		body := patchWorkerBody{}
+		if in.Body != nil {
+			body = *in.Body
+		}
 		row, err := q.UpdateWorker(ctx, db.UpdateWorkerParams{
-			DisplayName: in.Body.DisplayName,
-			IsActive:    in.Body.IsActive,
+			DisplayName: body.DisplayName,
+			IsActive:    body.IsActive,
 			ID:          id,
 			TenantID:    principal.TenantID,
 		})
@@ -189,19 +193,27 @@ type createWorkerInput struct {
 	}
 }
 
+type reinviteWorkerBody struct {
+	RevokeTokens bool `json:"revoke_tokens,omitempty"`
+}
+
+// reinviteWorkerInput.Body and patchWorkerInput.Body are pointers: every
+// field is optional, so the body as a whole is too (huma marks any
+// non-pointer Body required in the schema and rejects requests without one).
+// A missing body means "defaults" — reinvite without revoking, no-op patch.
 type reinviteWorkerInput struct {
 	ID   string `path:"id"`
-	Body struct {
-		RevokeTokens bool `json:"revoke_tokens,omitempty"`
-	}
+	Body *reinviteWorkerBody
+}
+
+type patchWorkerBody struct {
+	DisplayName *string `json:"display_name,omitempty"`
+	IsActive    *bool   `json:"is_active,omitempty"`
 }
 
 type patchWorkerInput struct {
 	ID   string `path:"id"`
-	Body struct {
-		DisplayName *string `json:"display_name,omitempty"`
-		IsActive    *bool   `json:"is_active,omitempty"`
-	}
+	Body *patchWorkerBody
 }
 
 type workerOutput struct {
