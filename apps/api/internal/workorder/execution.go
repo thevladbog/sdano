@@ -80,7 +80,19 @@ func tptr(v pgtype.Timestamptz) *time.Time {
 // stamped once (server clock) when device_finished_at first appears.
 func UpsertExecution(ctx context.Context, pool *pgxpool.Pool, tenantID, workerID, executionID uuid.UUID, in ExecutionInput) error {
 	q := db.New(pool)
-	wo, err := q.GetWorkOrderForWorker(ctx, db.GetWorkOrderForWorkerParams{ID: in.WorkOrderID, TenantID: tenantID})
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := q.WithTx(tx)
+
+	// FOR SHARE (see db/queries/worker.sql) takes a row lock on work_order that
+	// now spans the whole upsert, so a concurrent staff reassignment
+	// (UpdateWorkOrder) serializes against this transaction instead of racing
+	// it — the assignment check below stays true for the lifetime of the tx.
+	wo, err := qtx.GetWorkOrderForWorker(ctx, db.GetWorkOrderForWorkerParams{ID: in.WorkOrderID, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrWorkOrderNotAssigned
 	}
@@ -90,13 +102,6 @@ func UpsertExecution(ctx context.Context, pool *pgxpool.Pool, tenantID, workerID
 	if !wo.AssigneeID.Valid || wo.AssigneeID.UUID != workerID {
 		return ErrWorkOrderNotAssigned
 	}
-
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	qtx := q.WithTx(tx)
 
 	if err := qtx.UpsertWorkExecution(ctx, db.UpsertWorkExecutionParams{
 		ID: executionID, TenantID: tenantID, WorkOrderID: in.WorkOrderID, WorkerID: workerID,

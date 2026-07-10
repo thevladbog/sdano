@@ -32,6 +32,14 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
     : T[P];
 } : DistributeReadOnlyOverUnions<T>;
 
+export interface BulkCreateOrdersOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created: number;
+  /** @nullable */
+  ids: string[] | null;
+}
+
 export interface ChecklistItem {
   id: string;
   position: number;
@@ -186,6 +194,25 @@ export interface ListExecutionsOutputBody {
   next_cursor?: string;
 }
 
+export interface WorkOrderView {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assignee_id?: string;
+  created_at: string;
+  due_date: string;
+  id: string;
+  object_id: string;
+  status: string;
+  version_id: string;
+}
+
+export interface ListOrdersOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  work_orders: WorkOrderView[] | null;
+}
+
 export interface Object {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -274,6 +301,22 @@ export interface ObjectPatchBody {
   lon?: number;
   name?: string;
   qr_token?: string;
+}
+
+export interface OrderCreateBody {
+  assignee_id?: string;
+  /** YYYY-MM-DD */
+  due_date: string;
+  object_id: string;
+  version_id: string;
+}
+
+export interface PatchOrderBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  assignee_id?: string;
+  /** YYYY-MM-DD */
+  due_date?: string;
 }
 
 export interface PhotoView {
@@ -392,6 +435,16 @@ export interface TokenPairOutputBody {
 export type ListStaffObjectExecutionsParams = {
 cursor?: string;
 limit?: number;
+};
+
+export type ListStaffWorkOrdersParams = {
+/**
+ * YYYY-MM-DD
+ */
+date?: string;
+object_id?: string;
+assignee_id?: string;
+status?: string;
 };
 
 export type HTTPStatusCode1xx = 100 | 101 | 102 | 103;
@@ -857,6 +910,164 @@ export const listStaffObjectExecutions = async (id: string,
 
   const data: listStaffObjectExecutionsResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as listStaffObjectExecutionsResponse
+}
+
+
+
+export type listStaffWorkOrdersResponse200 = {
+  data: ListOrdersOutputBody
+  status: 200
+}
+
+export type listStaffWorkOrdersResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type listStaffWorkOrdersResponseSuccess = (listStaffWorkOrdersResponse200) & {
+  headers: Headers;
+};
+export type listStaffWorkOrdersResponseError = (listStaffWorkOrdersResponseDefault) & {
+  headers: Headers;
+};
+
+export type listStaffWorkOrdersResponse = (listStaffWorkOrdersResponseSuccess | listStaffWorkOrdersResponseError)
+
+export const getListStaffWorkOrdersUrl = (params?: ListStaffWorkOrdersParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/staff/work-orders?${stringifiedParams}` : `/api/v1/staff/work-orders`
+}
+
+/**
+ * @summary List work orders
+ */
+export const listStaffWorkOrders = async (params?: ListStaffWorkOrdersParams, options?: RequestInit): Promise<listStaffWorkOrdersResponse> => {
+
+  const res = await fetch(getListStaffWorkOrdersUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listStaffWorkOrdersResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as listStaffWorkOrdersResponse
+}
+
+
+
+export type createStaffWorkOrdersResponse201 = {
+  data: BulkCreateOrdersOutputBody
+  status: 201
+}
+
+export type createStaffWorkOrdersResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type createStaffWorkOrdersResponseSuccess = (createStaffWorkOrdersResponse201) & {
+  headers: Headers;
+};
+export type createStaffWorkOrdersResponseError = (createStaffWorkOrdersResponseDefault) & {
+  headers: Headers;
+};
+
+export type createStaffWorkOrdersResponse = (createStaffWorkOrdersResponseSuccess | createStaffWorkOrdersResponseError)
+
+export const getCreateStaffWorkOrdersUrl = () => {
+
+
+
+
+  return `/api/v1/staff/work-orders`
+}
+
+/**
+ * @summary Bulk-create work orders
+ */
+export const createStaffWorkOrders = async (orderCreateBodyNull: OrderCreateBody[] | null, options?: RequestInit): Promise<createStaffWorkOrdersResponse> => {
+
+  const res = await fetch(getCreateStaffWorkOrdersUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(orderCreateBodyNull)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: createStaffWorkOrdersResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as createStaffWorkOrdersResponse
+}
+
+
+
+export type patchStaffWorkOrderResponse200 = {
+  data: WorkOrderView
+  status: 200
+}
+
+export type patchStaffWorkOrderResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type patchStaffWorkOrderResponseSuccess = (patchStaffWorkOrderResponse200) & {
+  headers: Headers;
+};
+export type patchStaffWorkOrderResponseError = (patchStaffWorkOrderResponseDefault) & {
+  headers: Headers;
+};
+
+export type patchStaffWorkOrderResponse = (patchStaffWorkOrderResponseSuccess | patchStaffWorkOrderResponseError)
+
+export const getPatchStaffWorkOrderUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/staff/work-orders/${id}`
+}
+
+/**
+ * @summary Reassign or reschedule a work order
+ */
+export const patchStaffWorkOrder = async (id: string,
+    patchOrderBody: NonReadonly<PatchOrderBody>, options?: RequestInit): Promise<patchStaffWorkOrderResponse> => {
+
+  const res = await fetch(getPatchStaffWorkOrderUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(patchOrderBody)
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: patchStaffWorkOrderResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as patchStaffWorkOrderResponse
 }
 
 

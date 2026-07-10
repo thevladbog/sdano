@@ -217,6 +217,7 @@ const getWorkOrderForWorker = `-- name: GetWorkOrderForWorker :one
 SELECT id, object_id, assignee_id, status, version_id
 FROM work_order
 WHERE id = $1 AND tenant_id = $2
+FOR SHARE
 `
 
 type GetWorkOrderForWorkerParams struct {
@@ -233,6 +234,11 @@ type GetWorkOrderForWorkerRow struct {
 }
 
 // === execution upsert ======================================================
+// FOR SHARE: called inside UpsertExecution's transaction so the assignment
+// check and the rest of the upsert share one row lock on work_order. This
+// serializes a concurrent staff reassignment (UpdateWorkOrder) against an
+// in-flight worker upsert instead of letting both interleave and leave the
+// execution bound to a worker who is no longer assigned.
 func (q *Queries) GetWorkOrderForWorker(ctx context.Context, arg GetWorkOrderForWorkerParams) (GetWorkOrderForWorkerRow, error) {
 	row := q.db.QueryRow(ctx, getWorkOrderForWorker, arg.ID, arg.TenantID)
 	var i GetWorkOrderForWorkerRow

@@ -20,9 +20,15 @@ ORDER BY i.version_id, i.position;
 -- === execution upsert ======================================================
 
 -- name: GetWorkOrderForWorker :one
+-- FOR SHARE: called inside UpsertExecution's transaction so the assignment
+-- check and the rest of the upsert share one row lock on work_order. This
+-- serializes a concurrent staff reassignment (UpdateWorkOrder) against an
+-- in-flight worker upsert instead of letting both interleave and leave the
+-- execution bound to a worker who is no longer assigned.
 SELECT id, object_id, assignee_id, status, version_id
 FROM work_order
-WHERE id = $1 AND tenant_id = $2;
+WHERE id = $1 AND tenant_id = $2
+FOR SHARE;
 
 -- name: UpsertWorkExecution :exec
 -- Full-state idempotent upsert. finished_at is server receipt time, stamped

@@ -12,6 +12,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -43,6 +44,7 @@ func Register(api huma.API, pool *pgxpool.Pool) {
 	q := db.New(pool)
 	registerToday(api, q)
 	registerExecutions(api, pool)
+	registerStaffOrders(api, pool)
 }
 
 type todayObject struct {
@@ -238,5 +240,338 @@ func registerExecutions(api huma.API, pool *pgxpool.Pool) {
 			return nil, err
 		}
 		return &executionOutput{Body: view}, nil
+	})
+}
+
+// === staff work orders ======================================================
+
+const dateLayout = "2006-01-02"
+
+type orderCreateBody struct {
+	ObjectID   string  `json:"object_id" format:"uuid"`
+	VersionID  string  `json:"version_id" format:"uuid"`
+	AssigneeID *string `json:"assignee_id,omitempty" format:"uuid"`
+	DueDate    string  `json:"due_date" example:"2026-07-13" doc:"YYYY-MM-DD"`
+}
+
+// bulkCreateOrdersInput.Body carries `minItems`/`maxItems` tags — huma
+// applies these as JSON-schema validation and rejects a request with an
+// empty or >100-item array (422) before the handler ever runs (see
+// docs/features/request-inputs.md: "All doc & validation tags are allowed
+// on the body"), so no separate length check is needed in the handler.
+type bulkCreateOrdersInput struct {
+	Body []orderCreateBody `minItems:"1" maxItems:"100"`
+}
+
+type bulkCreateOrdersOutput struct {
+	Body struct {
+		Created int         `json:"created"`
+		IDs     []uuid.UUID `json:"ids"`
+	}
+}
+
+type workOrderView struct {
+	ID         uuid.UUID  `json:"id"`
+	ObjectID   uuid.UUID  `json:"object_id"`
+	VersionID  uuid.UUID  `json:"version_id"`
+	AssigneeID *uuid.UUID `json:"assignee_id,omitempty"`
+	DueDate    string     `json:"due_date"`
+	Status     string     `json:"status"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// toWorkOrderView maps the common work_order row shape shared by
+// InsertWorkOrder/GetWorkOrder/ListWorkOrders/UpdateWorkOrder — sqlc emits an
+// identical field set for each as its own named Row type, so this takes the
+// fields directly rather than one specific generated type.
+func toWorkOrderView(id, objectID, versionID uuid.UUID, assigneeID uuid.NullUUID, dueDate pgtype.Date, status db.WorkOrderStatus, createdAt pgtype.Timestamptz) workOrderView {
+	v := workOrderView{
+		ID:        id,
+		ObjectID:  objectID,
+		VersionID: versionID,
+		DueDate:   dueDate.Time.Format(dateLayout),
+		Status:    string(status),
+		CreatedAt: createdAt.Time,
+	}
+	if assigneeID.Valid {
+		a := assigneeID.UUID
+		v.AssigneeID = &a
+	}
+	return v
+}
+
+func uuidSetToSlice(set map[uuid.UUID]struct{}) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(set))
+	for id := range set {
+		out = append(out, id)
+	}
+	return out
+}
+
+// validateOrderReferences checks that every distinct object/version/assignee
+// id referenced by a bulk-create batch actually belongs to this tenant,
+// comparing the distinct count submitted against the count found. A mismatch
+// means at least one id is unknown or belongs to another tenant.
+func validateOrderReferences(ctx context.Context, q *db.Queries, tenantID uuid.UUID, objectIDs, versionIDs, assigneeIDs map[uuid.UUID]struct{}) error {
+	if len(objectIDs) > 0 {
+		n, err := q.CountObjectsInTenant(ctx, db.CountObjectsInTenantParams{TenantID: tenantID, Ids: uuidSetToSlice(objectIDs)})
+		if err != nil {
+			return fmt.Errorf("counting objects: %w", err)
+		}
+		if int(n) != len(objectIDs) {
+			return problem(http.StatusUnprocessableEntity, "invalid-reference", "one or more object_id values are unknown for this tenant")
+		}
+	}
+	if len(versionIDs) > 0 {
+		n, err := q.CountVersionsInTenant(ctx, db.CountVersionsInTenantParams{TenantID: tenantID, Ids: uuidSetToSlice(versionIDs)})
+		if err != nil {
+			return fmt.Errorf("counting checklist versions: %w", err)
+		}
+		if int(n) != len(versionIDs) {
+			return problem(http.StatusUnprocessableEntity, "invalid-reference", "one or more version_id values are unknown for this tenant")
+		}
+	}
+	if len(assigneeIDs) > 0 {
+		n, err := q.CountActiveWorkersInTenant(ctx, db.CountActiveWorkersInTenantParams{TenantID: tenantID, Ids: uuidSetToSlice(assigneeIDs)})
+		if err != nil {
+			return fmt.Errorf("counting workers: %w", err)
+		}
+		if int(n) != len(assigneeIDs) {
+			return problem(http.StatusUnprocessableEntity, "invalid-reference", "one or more assignee_id values are not active workers in this tenant")
+		}
+	}
+	return nil
+}
+
+type parsedOrder struct {
+	id         uuid.UUID
+	objectID   uuid.UUID
+	versionID  uuid.UUID
+	assigneeID uuid.NullUUID
+	dueDate    pgtype.Date
+}
+
+// parseOrderBatch parses and UUID/date-validates every item in a bulk-create
+// request, and collects the distinct referenced ids for validateOrderReferences.
+func parseOrderBatch(items []orderCreateBody) ([]parsedOrder, map[uuid.UUID]struct{}, map[uuid.UUID]struct{}, map[uuid.UUID]struct{}, error) {
+	parsed := make([]parsedOrder, 0, len(items))
+	objectIDs := map[uuid.UUID]struct{}{}
+	versionIDs := map[uuid.UUID]struct{}{}
+	assigneeIDs := map[uuid.UUID]struct{}{}
+	for _, item := range items {
+		objectID, err := uuid.Parse(item.ObjectID)
+		if err != nil {
+			return nil, nil, nil, nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid object_id")
+		}
+		versionID, err := uuid.Parse(item.VersionID)
+		if err != nil {
+			return nil, nil, nil, nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid version_id")
+		}
+		var assigneeID uuid.NullUUID
+		if item.AssigneeID != nil {
+			a, err := uuid.Parse(*item.AssigneeID)
+			if err != nil {
+				return nil, nil, nil, nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid assignee_id")
+			}
+			assigneeID = uuid.NullUUID{UUID: a, Valid: true}
+			assigneeIDs[a] = struct{}{}
+		}
+		due, err := time.Parse(dateLayout, item.DueDate)
+		if err != nil {
+			return nil, nil, nil, nil, problem(http.StatusUnprocessableEntity, "invalid-date", "due_date must be YYYY-MM-DD")
+		}
+		objectIDs[objectID] = struct{}{}
+		versionIDs[versionID] = struct{}{}
+		parsed = append(parsed, parsedOrder{
+			id: uuid.New(), objectID: objectID, versionID: versionID,
+			assigneeID: assigneeID, dueDate: pgtype.Date{Time: due, Valid: true},
+		})
+	}
+	return parsed, objectIDs, versionIDs, assigneeIDs, nil
+}
+
+type listOrdersInput struct {
+	Date       string `query:"date" doc:"YYYY-MM-DD"`
+	ObjectID   string `query:"object_id" format:"uuid"`
+	AssigneeID string `query:"assignee_id" format:"uuid"`
+	Status     string `query:"status"`
+}
+
+type listOrdersOutput struct {
+	Body struct {
+		WorkOrders []workOrderView `json:"work_orders"`
+	}
+}
+
+type patchOrderBody struct {
+	AssigneeID *string `json:"assignee_id,omitempty" format:"uuid"`
+	DueDate    *string `json:"due_date,omitempty" example:"2026-07-20" doc:"YYYY-MM-DD"`
+}
+
+type patchOrderInput struct {
+	ID   string `path:"id"`
+	Body patchOrderBody
+}
+
+type orderOutput struct {
+	Body workOrderView
+}
+
+// registerStaffOrders wires the staff-facing work-order bulk create / list /
+// patch endpoints. Bulk create runs one transaction so a batch either lands
+// entirely or not at all (see the bulk-atomicity test). List and patch are
+// single-statement queries under the existing per-call db.Queries.
+func registerStaffOrders(api huma.API, pool *pgxpool.Pool) {
+	q := db.New(pool)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "createStaffWorkOrders",
+		Method:        http.MethodPost,
+		Path:          "/api/v1/staff/work-orders",
+		Summary:       "Bulk-create work orders",
+		Tags:          []string{"staff"},
+		DefaultStatus: http.StatusCreated,
+	}, func(ctx context.Context, in *bulkCreateOrdersInput) (*bulkCreateOrdersOutput, error) {
+		principal, ok := auth.PrincipalFrom(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+
+		parsed, objectIDs, versionIDs, assigneeIDs, perr := parseOrderBatch(in.Body)
+		if perr != nil {
+			return nil, perr
+		}
+		if err := validateOrderReferences(ctx, q, principal.TenantID, objectIDs, versionIDs, assigneeIDs); err != nil {
+			return nil, err
+		}
+
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("begin tx: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		qtx := q.WithTx(tx)
+
+		ids := make([]uuid.UUID, 0, len(parsed))
+		for _, p := range parsed {
+			if err := qtx.InsertWorkOrder(ctx, db.InsertWorkOrderParams{
+				ID: p.id, TenantID: principal.TenantID, ObjectID: p.objectID,
+				VersionID: p.versionID, AssigneeID: p.assigneeID, DueDate: p.dueDate,
+			}); err != nil {
+				return nil, fmt.Errorf("inserting work order: %w", err)
+			}
+			ids = append(ids, p.id)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit: %w", err)
+		}
+
+		out := &bulkCreateOrdersOutput{}
+		out.Body.Created = len(ids)
+		out.Body.IDs = ids
+		return out, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "listStaffWorkOrders",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/staff/work-orders",
+		Summary:     "List work orders",
+		Tags:        []string{"staff"},
+	}, func(ctx context.Context, in *listOrdersInput) (*listOrdersOutput, error) {
+		principal, ok := auth.PrincipalFrom(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		params := db.ListWorkOrdersParams{TenantID: principal.TenantID}
+		if in.Date != "" {
+			d, err := time.Parse(dateLayout, in.Date)
+			if err != nil {
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-date", "date must be YYYY-MM-DD")
+			}
+			params.DueDate = pgtype.Date{Time: d, Valid: true}
+		}
+		if in.ObjectID != "" {
+			oid, err := uuid.Parse(in.ObjectID)
+			if err != nil {
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid object_id")
+			}
+			params.ObjectID = uuid.NullUUID{UUID: oid, Valid: true}
+		}
+		if in.AssigneeID != "" {
+			aid, err := uuid.Parse(in.AssigneeID)
+			if err != nil {
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid assignee_id")
+			}
+			params.AssigneeID = uuid.NullUUID{UUID: aid, Valid: true}
+		}
+		if in.Status != "" {
+			st := db.WorkOrderStatus(in.Status)
+			switch st {
+			case db.WorkOrderStatusScheduled, db.WorkOrderStatusInProgress, db.WorkOrderStatusDone, db.WorkOrderStatusMissed:
+				params.Status = &st
+			default:
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-status", "unknown status value")
+			}
+		}
+
+		rows, err := q.ListWorkOrders(ctx, params)
+		if err != nil {
+			return nil, fmt.Errorf("listing work orders for tenant %s: %w", principal.TenantID, err)
+		}
+		out := &listOrdersOutput{}
+		out.Body.WorkOrders = make([]workOrderView, 0, len(rows))
+		for _, r := range rows {
+			out.Body.WorkOrders = append(out.Body.WorkOrders, toWorkOrderView(r.ID, r.ObjectID, r.VersionID, r.AssigneeID, r.DueDate, r.Status, r.CreatedAt))
+		}
+		return out, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "patchStaffWorkOrder",
+		Method:      http.MethodPatch,
+		Path:        "/api/v1/staff/work-orders/{id}",
+		Summary:     "Reassign or reschedule a work order",
+		Tags:        []string{"staff"},
+	}, func(ctx context.Context, in *patchOrderInput) (*orderOutput, error) {
+		principal, ok := auth.PrincipalFrom(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		id, err := uuid.Parse(in.ID)
+		if err != nil {
+			return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid work order id")
+		}
+		params := db.UpdateWorkOrderParams{ID: id, TenantID: principal.TenantID}
+		if in.Body.AssigneeID != nil {
+			aid, err := uuid.Parse(*in.Body.AssigneeID)
+			if err != nil {
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid assignee_id")
+			}
+			n, err := q.CountActiveWorkersInTenant(ctx, db.CountActiveWorkersInTenantParams{TenantID: principal.TenantID, Ids: []uuid.UUID{aid}})
+			if err != nil {
+				return nil, fmt.Errorf("validating assignee %s: %w", aid, err)
+			}
+			if n != 1 {
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-reference", "assignee_id is not an active worker in this tenant")
+			}
+			params.AssigneeID = uuid.NullUUID{UUID: aid, Valid: true}
+		}
+		if in.Body.DueDate != nil {
+			d, err := time.Parse(dateLayout, *in.Body.DueDate)
+			if err != nil {
+				return nil, problem(http.StatusUnprocessableEntity, "invalid-date", "due_date must be YYYY-MM-DD")
+			}
+			params.DueDate = pgtype.Date{Time: d, Valid: true}
+		}
+
+		row, err := q.UpdateWorkOrder(ctx, params)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, problem(http.StatusNotFound, "work-order-not-found", "no work order with this id")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("updating work order %s: %w", id, err)
+		}
+		return &orderOutput{Body: toWorkOrderView(row.ID, row.ObjectID, row.VersionID, row.AssigneeID, row.DueDate, row.Status, row.CreatedAt)}, nil
 	})
 }
