@@ -49,6 +49,22 @@ func (q *Queries) ClaimNextReport(ctx context.Context) (ClaimNextReportRow, erro
 	return i, err
 }
 
+const failExhaustedReports = `-- name: FailExhaustedReports :execrows
+UPDATE report SET status = 'failed', failure_reason = 'render failed after 3 attempts (recovered by sweep)'
+WHERE status = 'generating' AND render_attempts >= 3
+`
+
+// Recovery sweep: a row stuck at >= 3 attempts but still 'generating' means the
+// fail-mark write itself was lost (crash/cancelled ctx); no claim will ever pick
+// it up again (ClaimNextReport requires render_attempts < 3), so fail it here.
+func (q *Queries) FailExhaustedReports(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, failExhaustedReports)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getContractName = `-- name: GetContractName :one
 SELECT name, client_name FROM contract WHERE id = $1 AND tenant_id = $2
 `

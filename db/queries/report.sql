@@ -33,6 +33,13 @@ WHERE id = $1 AND status = 'generating';
 UPDATE report SET status = 'failed', failure_reason = $2
 WHERE id = $1 AND status = 'generating';
 
+-- name: FailExhaustedReports :execrows
+-- Recovery sweep: a row stuck at >= 3 attempts but still 'generating' means the
+-- fail-mark write itself was lost (crash/cancelled ctx); no claim will ever pick
+-- it up again (ClaimNextReport requires render_attempts < 3), so fail it here.
+UPDATE report SET status = 'failed', failure_reason = 'render failed after 3 attempts (recovered by sweep)'
+WHERE status = 'generating' AND render_attempts >= 3;
+
 -- name: GetTenantForReport :one
 -- timezone: report times (job completion, photo captions) print in the
 -- tenant's local wall clock — the zone the inspector and the worker live in.

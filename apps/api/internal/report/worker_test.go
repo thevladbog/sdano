@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -192,5 +193,59 @@ func TestWorkerTickEmptyQueueReturnsFalse(t *testing.T) {
 	w := NewWorker(pool, newFakeStore(), &fakeRenderer{})
 	if processed := w.tick(context.Background()); processed {
 		t.Error("tick() = true on an empty queue, want false")
+	}
+}
+
+// TestWorkerTickSweepsOrphanedExhaustedRow simulates a lost fail-mark write
+// (crash or cancelled shutdown ctx after the 3rd claim): a row stuck at
+// status='generating' with render_attempts=3 is unreachable through
+// ClaimNextReport forever, so the tick-leading sweep must fail it.
+func TestWorkerTickSweepsOrphanedExhaustedRow(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenantID, reportID := seedMinimalReport(t, pool)
+	// Orphan the row exactly as a lost fail-mark leaves it: claimed three
+	// times (attempts exhausted) but never marked failed.
+	if _, err := pool.Exec(ctx, `UPDATE report SET render_attempts = 3 WHERE id = $1`, reportID); err != nil {
+		t.Fatalf("orphaning report row: %v", err)
+	}
+
+	w := NewWorker(pool, newFakeStore(), &fakeRenderer{})
+	// The orphaned row is not claimable, so with it swept the queue is empty.
+	if processed := w.tick(ctx); processed {
+		t.Error("tick() = true, want false (swept row must not count as processed)")
+	}
+
+	row, err := db.New(pool).GetReport(ctx, db.GetReportParams{ID: reportID, TenantID: tenantID})
+	if err != nil {
+		t.Fatalf("GetReport: %v", err)
+	}
+	if row.Status != db.ReportStatusFailed {
+		t.Fatalf("Status = %q, want failed (sweep must recover the orphan)", row.Status)
+	}
+	want := "render failed after 3 attempts (recovered by sweep)"
+	if row.FailureReason == nil || *row.FailureReason != want {
+		t.Errorf("FailureReason = %v, want %q", row.FailureReason, want)
+	}
+}
+
+func TestTruncateReasonMultiByteSafe(t *testing.T) {
+	// Build a string whose 500-byte boundary falls mid-rune: 499 ASCII bytes,
+	// then a 2-byte Cyrillic rune straddling bytes 500-501.
+	s := strings.Repeat("a", 499) + "ф" + strings.Repeat("б", 10)
+	got := truncateReason(s)
+	if len(got) > 500 {
+		t.Errorf("len = %d, want <= 500", len(got))
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("truncateReason produced invalid UTF-8: %q", got)
+	}
+	if got != strings.Repeat("a", 499) {
+		t.Errorf("want the straddling rune dropped entirely, got trailing %q", got[490:])
+	}
+
+	// Short strings pass through untouched.
+	if got := truncateReason("boom: ошибка"); got != "boom: ошибка" {
+		t.Errorf("short string mutated: %q", got)
 	}
 }

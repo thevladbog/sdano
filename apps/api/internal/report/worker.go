@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,6 +29,10 @@ const maxRenderAttempts = 3
 // downstream error (e.g. a raw chromedp/S3 error dump) never grows without
 // limit in the failure_reason column.
 const maxFailureReasonLen = 500
+
+// failMarkTimeout bounds the shutdown-detached MarkReportFailed write (see
+// tick) so a wedged DB can't hold up process exit indefinitely.
+const failMarkTimeout = 5 * time.Second
 
 // Worker drains the report queue: report rows sitting in 'generating'
 // status, produced by task 5's enqueue endpoint. It composes the pieces
@@ -64,10 +69,22 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// tick claims and renders at most one queued report, returning whether a
-// row was claimed (false on an empty queue). Exported-for-test seam: Run
-// wraps tick with the poll sleep; tests call tick directly.
+// tick sweeps orphaned rows, then claims and renders at most one queued
+// report, returning whether a row was claimed (false on an empty queue).
+// Exported-for-test seam: Run wraps tick with the poll sleep; tests call
+// tick directly.
 func (w *Worker) tick(ctx context.Context) bool {
+	// Self-healing sweep before claiming: a 'generating' row already at >= 3
+	// attempts is unreachable through ClaimNextReport (it requires
+	// render_attempts < 3) — it means a previous fail-mark write was lost
+	// (process crash, cancelled shutdown ctx, transient DB error). Fail it
+	// here so the queue never accumulates permanently orphaned rows.
+	if swept, err := w.q.FailExhaustedReports(ctx); err != nil {
+		slog.Error("sweeping exhausted reports", "error", err)
+	} else if swept > 0 {
+		slog.Warn("failed orphaned reports stuck at max attempts", "count", swept)
+	}
+
 	claimed, err := w.q.ClaimNextReport(ctx)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -85,7 +102,15 @@ func (w *Worker) tick(ctx context.Context) bool {
 		// next poll to pick back up.
 		if claimed.RenderAttempts >= maxRenderAttempts {
 			reason := truncateReason(fmt.Sprintf("render failed after %d attempts: %v", claimed.RenderAttempts, err))
-			if failErr := w.q.MarkReportFailed(ctx, db.MarkReportFailedParams{ID: claimed.ID, FailureReason: &reason}); failErr != nil {
+			// Detach the bookkeeping write from the worker ctx: on shutdown
+			// the render error above IS the cancelled ctx, and reusing it
+			// here would kill this write too (pgxpool.Acquire selects on
+			// ctx.Done), orphaning the row until the sweep. WithoutCancel +
+			// a short timeout lets the mark land during graceful shutdown
+			// without letting a wedged DB block exit.
+			failCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failMarkTimeout)
+			defer cancel()
+			if failErr := w.q.MarkReportFailed(failCtx, db.MarkReportFailedParams{ID: claimed.ID, FailureReason: &reason}); failErr != nil {
 				slog.Error("marking report failed", "report_id", claimed.ID, "error", failErr)
 			}
 		}
@@ -147,15 +172,26 @@ func (w *Worker) render(ctx context.Context, claimed db.ClaimNextReportRow) erro
 		return fmt.Errorf("uploading pdf: %w", err)
 	}
 
+	// If this mark fails after a successful Put, the uploaded PDF stays in S3
+	// unreferenced (regeneration creates a new row/key) — harmless, deliberate.
 	if err := w.q.MarkReportReady(ctx, db.MarkReportReadyParams{ID: claimed.ID, S3Key: &key}); err != nil {
 		return fmt.Errorf("marking report ready: %w", err)
 	}
 	return nil
 }
 
+// truncateReason caps s at maxFailureReasonLen bytes without ever slicing
+// through the middle of a multi-byte rune — a bare s[:500] on an error
+// message containing e.g. Cyrillic could produce invalid UTF-8, which
+// Postgres rejects, which would in turn lose the fail-mark write itself.
 func truncateReason(s string) string {
 	if len(s) <= maxFailureReasonLen {
 		return s
 	}
-	return s[:maxFailureReasonLen]
+	s = s[:maxFailureReasonLen]
+	// Back off any trailing partial rune left by the byte-level cut.
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
 }
