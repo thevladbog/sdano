@@ -93,7 +93,7 @@ WHERE execution_id = $1
 ORDER BY id;
 
 -- name: ListExecutionPhotos :many
-SELECT id, kind, taken_at, lat, lon, uploaded_at
+SELECT id, kind, s3_key, taken_at, lat, lon, uploaded_at
 FROM photo
 WHERE execution_id = $1
 ORDER BY id;

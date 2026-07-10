@@ -98,9 +98,10 @@ func New(cfg config.Config, deps Deps) (*chi.Mux, huma.API) {
 	// touches deps.Pool until a request actually runs. Registering
 	// unconditionally means `go run ./cmd/api openapi` (which builds the app
 	// with a nil pool) still emits listStaffObjects in the spec.
+	store := photo.NewS3Store(deps.S3, cfg.S3Bucket)
 	object.Register(api, queries)
-	workorder.Register(api, deps.Pool)
-	photo.Register(api, deps.Pool, photo.NewS3Store(deps.S3, cfg.S3Bucket))
+	workorder.Register(api, deps.Pool, store)
+	photo.Register(api, deps.Pool, store)
 	roster.Register(api, deps.Pool)
 	auth.RegisterAuthRoutes(api, auth.NewService(deps.Pool, cfg.JWTSecret))
 

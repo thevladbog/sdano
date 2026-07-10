@@ -432,6 +432,52 @@ export interface ReinviteWorkerInputBody {
   revoke_tokens?: boolean;
 }
 
+export interface StaffExecutionItemView {
+  checked: boolean;
+  checked_at?: string;
+  id: string;
+  position: number;
+  template_item_id: string;
+  title: string;
+}
+
+export interface StaffExecutionPhotoView {
+  id: string;
+  kind: string;
+  lat?: number;
+  lon?: number;
+  taken_at?: string;
+  uploaded: boolean;
+  url?: string;
+  url_expires_at?: string;
+}
+
+export interface StaffExecutionDetailView {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  created_at: string;
+  device_finished_at?: string;
+  finished_at?: string;
+  id: string;
+  /** @nullable */
+  items: StaffExecutionItemView[] | null;
+  note?: string;
+  object_id: string;
+  object_name: string;
+  /** @nullable */
+  photos: StaffExecutionPhotoView[] | null;
+  started_at?: string;
+  work_order_id: string;
+  worker_name: string;
+}
+
+export interface StaffPhotoURLOutputBody {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  expires_at: string;
+  url: string;
+}
+
 export interface TodayObject {
   /** @nullable */
   address: string | null;
@@ -692,6 +738,56 @@ export const authWorkerClaim = async (claimInputBody: NonReadonly<ClaimInputBody
 
 
 
+export type getStaffExecutionResponse200 = {
+  data: StaffExecutionDetailView
+  status: 200
+}
+
+export type getStaffExecutionResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getStaffExecutionResponseSuccess = (getStaffExecutionResponse200) & {
+  headers: Headers;
+};
+export type getStaffExecutionResponseError = (getStaffExecutionResponseDefault) & {
+  headers: Headers;
+};
+
+export type getStaffExecutionResponse = (getStaffExecutionResponseSuccess | getStaffExecutionResponseError)
+
+export const getGetStaffExecutionUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/staff/executions/${id}`
+}
+
+/**
+ * @summary Execution detail: checklist items and photo evidence
+ */
+export const getStaffExecution = async (id: string, options?: RequestInit): Promise<getStaffExecutionResponse> => {
+
+  const res = await fetch(getGetStaffExecutionUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getStaffExecutionResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getStaffExecutionResponse
+}
+
+
+
 export type listStaffObjectsResponse200 = {
   data: ListOutputBody
   status: 200
@@ -948,6 +1044,56 @@ export const listStaffObjectExecutions = async (id: string,
 
   const data: listStaffObjectExecutionsResponse['data'] = body ? JSON.parse(body) : {}
   return { data, status: res.status, headers: res.headers } as listStaffObjectExecutionsResponse
+}
+
+
+
+export type getStaffPhotoURLResponse200 = {
+  data: StaffPhotoURLOutputBody
+  status: 200
+}
+
+export type getStaffPhotoURLResponseDefault = {
+  data: ErrorModel
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type getStaffPhotoURLResponseSuccess = (getStaffPhotoURLResponse200) & {
+  headers: Headers;
+};
+export type getStaffPhotoURLResponseError = (getStaffPhotoURLResponseDefault) & {
+  headers: Headers;
+};
+
+export type getStaffPhotoURLResponse = (getStaffPhotoURLResponseSuccess | getStaffPhotoURLResponseError)
+
+export const getGetStaffPhotoURLUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/staff/photos/${id}/url`
+}
+
+/**
+ * @summary Presigned GET URL for a confirmed photo
+ */
+export const getStaffPhotoURL = async (id: string, options?: RequestInit): Promise<getStaffPhotoURLResponse> => {
+
+  const res = await fetch(getGetStaffPhotoURLUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+)
+
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getStaffPhotoURLResponse['data'] = body ? JSON.parse(body) : {}
+  return { data, status: res.status, headers: res.headers } as getStaffPhotoURLResponse
 }
 
 

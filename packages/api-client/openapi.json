@@ -1267,6 +1267,181 @@
         },
         "type": "object"
       },
+      "StaffExecutionDetailView": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/StaffExecutionDetailView.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "device_finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StaffExecutionItemView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "note": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "object_name": {
+            "type": "string"
+          },
+          "photos": {
+            "items": {
+              "$ref": "#/components/schemas/StaffExecutionPhotoView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "work_order_id": {
+            "type": "string"
+          },
+          "worker_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "work_order_id",
+          "object_id",
+          "object_name",
+          "worker_name",
+          "created_at",
+          "items",
+          "photos"
+        ],
+        "type": "object"
+      },
+      "StaffExecutionItemView": {
+        "additionalProperties": false,
+        "properties": {
+          "checked": {
+            "type": "boolean"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "position": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "template_item_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "template_item_id",
+          "position",
+          "title",
+          "checked"
+        ],
+        "type": "object"
+      },
+      "StaffExecutionPhotoView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "lat": {
+            "format": "double",
+            "type": "number"
+          },
+          "lon": {
+            "format": "double",
+            "type": "number"
+          },
+          "taken_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "uploaded": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          },
+          "url_expires_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "uploaded"
+        ],
+        "type": "object"
+      },
+      "StaffPhotoURLOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/StaffPhotoURLOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at"
+        ],
+        "type": "object"
+      },
       "StaffWorkerView": {
         "additionalProperties": false,
         "properties": {
@@ -1703,6 +1878,47 @@
         ]
       }
     },
+    "/api/v1/staff/executions/{id}": {
+      "get": {
+        "operationId": "getStaffExecution",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffExecutionDetailView"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Execution detail: checklist items and photo evidence",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
     "/api/v1/staff/objects": {
       "get": {
         "operationId": "listStaffObjects",
@@ -1916,6 +2132,47 @@
           }
         },
         "summary": "Object execution history (cursor-paginated)",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/photos/{id}/url": {
+      "get": {
+        "operationId": "getStaffPhotoURL",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffPhotoURLOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Presigned GET URL for a confirmed photo",
         "tags": [
           "staff"
         ]

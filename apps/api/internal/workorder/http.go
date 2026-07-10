@@ -18,6 +18,7 @@ import (
 
 	"sdano.app/api/internal/auth"
 	"sdano.app/api/internal/db"
+	"sdano.app/api/internal/photo"
 )
 
 // TenantToday computes "today" as a date in the tenant's IANA timezone
@@ -36,15 +37,18 @@ func TenantToday(ctx context.Context, q *db.Queries, tenantID uuid.UUID) (pgtype
 	return pgtype.Date{Time: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC), Valid: true}, nil
 }
 
-// Register wires the worker planned-loop routes onto api. It takes the pool
-// (not just Queries) because the execution upsert added in Task 3 runs a
-// transaction. Route registration never touches the pool until a request runs,
-// so a nil pool (openapi mode) is fine.
-func Register(api huma.API, pool *pgxpool.Pool) {
+// Register wires the worker planned-loop routes plus the staff-facing
+// work-order and evidence-read routes onto api. It takes the pool (not just
+// Queries) because the execution upsert added in Task 3 runs a transaction.
+// Route registration never touches the pool until a request runs, so a nil
+// pool (openapi mode) is fine. store is the object store used to presign
+// GET URLs for the staff execution-detail photo list.
+func Register(api huma.API, pool *pgxpool.Pool, store photo.ObjectStore) {
 	q := db.New(pool)
 	registerToday(api, q)
 	registerExecutions(api, pool)
 	registerStaffOrders(api, pool)
+	registerStaffExecutionDetail(api, q, store)
 }
 
 type todayObject struct {
@@ -580,5 +584,133 @@ func registerStaffOrders(api huma.API, pool *pgxpool.Pool) {
 			return nil, fmt.Errorf("updating work order %s: %w", id, err)
 		}
 		return &orderOutput{Body: toWorkOrderView(row.ID, row.ObjectID, row.VersionID, row.AssigneeID, row.DueDate, row.Status, row.CreatedAt)}, nil
+	})
+}
+
+// === staff evidence reads ===================================================
+
+type staffExecutionItemView struct {
+	ID             uuid.UUID  `json:"id"`
+	TemplateItemID uuid.UUID  `json:"template_item_id"`
+	Position       int32      `json:"position"`
+	Title          string     `json:"title"`
+	Checked        bool       `json:"checked"`
+	CheckedAt      *time.Time `json:"checked_at,omitempty"`
+}
+
+// staffExecutionPhotoView never drops an unconfirmed photo: Uploaded is
+// always present, and URL/URLExpiresAt are only populated (pointer +
+// omitempty) once the photo has actually landed in S3 — evidence, confirmed
+// or not, stays visible.
+type staffExecutionPhotoView struct {
+	ID           uuid.UUID  `json:"id"`
+	Kind         string     `json:"kind"`
+	TakenAt      *time.Time `json:"taken_at,omitempty"`
+	Lat          *float64   `json:"lat,omitempty"`
+	Lon          *float64   `json:"lon,omitempty"`
+	Uploaded     bool       `json:"uploaded"`
+	URL          *string    `json:"url,omitempty"`
+	URLExpiresAt *time.Time `json:"url_expires_at,omitempty"`
+}
+
+type staffExecutionDetailView struct {
+	ID               uuid.UUID                 `json:"id"`
+	WorkOrderID      uuid.UUID                 `json:"work_order_id"`
+	ObjectID         uuid.UUID                 `json:"object_id"`
+	ObjectName       string                    `json:"object_name"`
+	WorkerName       string                    `json:"worker_name"`
+	CreatedAt        time.Time                 `json:"created_at"`
+	StartedAt        *time.Time                `json:"started_at,omitempty"`
+	FinishedAt       *time.Time                `json:"finished_at,omitempty"`
+	DeviceFinishedAt *time.Time                `json:"device_finished_at,omitempty"`
+	Note             *string                   `json:"note,omitempty"`
+	Items            []staffExecutionItemView  `json:"items"`
+	Photos           []staffExecutionPhotoView `json:"photos"`
+}
+
+type staffExecutionDetailInput struct {
+	ID string `path:"id"`
+}
+
+type staffExecutionDetailOutput struct {
+	Body staffExecutionDetailView
+}
+
+// registerStaffExecutionDetail wires GET /api/v1/staff/executions/{id}: the
+// checklist items (with titles) and photo evidence for one execution, with a
+// presigned GET URL for every confirmed photo.
+//
+// GetExecutionDetail is the only tenant-scoped lookup of the three queries
+// this handler runs — ListExecutionItemsWithTitles and ListExecutionPhotos
+// both take a bare executionID with no tenant filter. GetExecutionDetail
+// MUST run first and 404 on a miss before either of those queries touches
+// the id, otherwise a staff principal from tenant A could read tenant B's
+// checklist items and photos for a guessed/enumerated execution id.
+func registerStaffExecutionDetail(api huma.API, q *db.Queries, store photo.ObjectStore) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getStaffExecution",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/staff/executions/{id}",
+		Summary:     "Execution detail: checklist items and photo evidence",
+		Tags:        []string{"staff"},
+	}, func(ctx context.Context, in *staffExecutionDetailInput) (*staffExecutionDetailOutput, error) {
+		p, ok := auth.PrincipalFrom(ctx)
+		if !ok {
+			return nil, huma.Error401Unauthorized("authentication required")
+		}
+		execID, err := uuid.Parse(in.ID)
+		if err != nil {
+			return nil, problem(http.StatusUnprocessableEntity, "invalid-uuid", "invalid execution id")
+		}
+		e, err := q.GetExecutionDetail(ctx, db.GetExecutionDetailParams{ID: execID, TenantID: p.TenantID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, problem(http.StatusNotFound, "execution-not-found", "execution not found")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("loading execution detail: %w", err)
+		}
+
+		items, err := q.ListExecutionItemsWithTitles(ctx, execID)
+		if err != nil {
+			return nil, fmt.Errorf("loading execution items: %w", err)
+		}
+		photos, err := q.ListExecutionPhotos(ctx, uuid.NullUUID{UUID: execID, Valid: true})
+		if err != nil {
+			return nil, fmt.Errorf("loading execution photos: %w", err)
+		}
+
+		view := staffExecutionDetailView{
+			ID: e.ID, WorkOrderID: e.WorkOrderID, ObjectID: e.ObjectID, ObjectName: e.ObjectName,
+			WorkerName: e.WorkerName, CreatedAt: e.CreatedAt.Time,
+			StartedAt: tptr(e.StartedAt), FinishedAt: tptr(e.FinishedAt), DeviceFinishedAt: tptr(e.DeviceFinishedAt),
+			Note:   e.Note,
+			Items:  make([]staffExecutionItemView, 0, len(items)),
+			Photos: make([]staffExecutionPhotoView, 0, len(photos)),
+		}
+		for _, it := range items {
+			view.Items = append(view.Items, staffExecutionItemView{
+				ID: it.ID, TemplateItemID: it.TemplateItemID, Position: it.Position, Title: it.Title,
+				Checked: it.Checked, CheckedAt: tptr(it.CheckedAt),
+			})
+		}
+		for _, ph := range photos {
+			pv := staffExecutionPhotoView{
+				ID: ph.ID, Kind: string(ph.Kind), TakenAt: tptr(ph.TakenAt), Lat: ph.Lat, Lon: ph.Lon,
+				Uploaded: ph.UploadedAt.Valid,
+			}
+			// An unconfirmed photo (uploaded_at still null) stays in the list
+			// with uploaded:false and no url — evidence is never silently
+			// dropped just because the upload hasn't landed yet.
+			if ph.UploadedAt.Valid {
+				url, expires, err := store.PresignGet(ctx, ph.S3Key)
+				if err != nil {
+					return nil, fmt.Errorf("presigning photo %s: %w", ph.ID, err)
+				}
+				pv.URL = &url
+				pv.URLExpiresAt = &expires
+			}
+			view.Photos = append(view.Photos, pv)
+		}
+		return &staffExecutionDetailOutput{Body: view}, nil
 	})
 }

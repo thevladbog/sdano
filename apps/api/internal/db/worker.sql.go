@@ -412,7 +412,7 @@ func (q *Queries) ListExecutionItems(ctx context.Context, executionID uuid.UUID)
 }
 
 const listExecutionPhotos = `-- name: ListExecutionPhotos :many
-SELECT id, kind, taken_at, lat, lon, uploaded_at
+SELECT id, kind, s3_key, taken_at, lat, lon, uploaded_at
 FROM photo
 WHERE execution_id = $1
 ORDER BY id
@@ -421,6 +421,7 @@ ORDER BY id
 type ListExecutionPhotosRow struct {
 	ID         uuid.UUID
 	Kind       PhotoKind
+	S3Key      string
 	TakenAt    pgtype.Timestamptz
 	Lat        *float64
 	Lon        *float64
@@ -439,6 +440,7 @@ func (q *Queries) ListExecutionPhotos(ctx context.Context, executionID uuid.Null
 		if err := rows.Scan(
 			&i.ID,
 			&i.Kind,
+			&i.S3Key,
 			&i.TakenAt,
 			&i.Lat,
 			&i.Lon,
