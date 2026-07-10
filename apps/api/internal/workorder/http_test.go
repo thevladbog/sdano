@@ -132,3 +132,43 @@ func TestExecutionUpsertHTTPRoundTrip(t *testing.T) {
 		t.Errorf("intruder: got %d, want 403; body %s", rec3.Code, rec3.Body)
 	}
 }
+
+func TestWorkerTodayUsesTenantTimezone(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, worker := uuid.New(), uuid.New()
+	object, tmpl, version, order := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	must := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	// Kiritimati is UTC+14: its calendar date is ahead of UTC for 10h/day, so
+	// this test deterministically diverges from UTC whenever UTC time is >= 10:00.
+	// To be deterministic at ANY hour, compute the tenant-local date in Go and
+	// seed the order on that date; assert it is returned.
+	must(`INSERT INTO tenant (id, name, timezone) VALUES ($1,'TZ Co','Pacific/Kiritimati')`, tenant)
+	must(`INSERT INTO app_user (id, tenant_id, role, display_name) VALUES ($1,$2,'worker','A')`, worker, tenant)
+	must(`INSERT INTO object (id, tenant_id, name) VALUES ($1,$2,'O')`, object, tenant)
+	must(`INSERT INTO checklist_template (id, tenant_id, name) VALUES ($1,$2,'T')`, tmpl, tenant)
+	must(`INSERT INTO checklist_template_version (id, template_id, version) VALUES ($1,$2,1)`, version, tmpl)
+	loc, err := time.LoadLocation("Pacific/Kiritimati")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	localToday := time.Now().In(loc).Format("2006-01-02")
+	must(`INSERT INTO work_order (id, tenant_id, object_id, version_id, assignee_id, due_date) VALUES ($1,$2,$3,$4,$5,$6::date)`, order, tenant, object, version, worker, localToday)
+
+	router, _ := app.New(config.Config{JWTSecret: testSecret}, app.Deps{Pool: pool})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/worker/today", nil)
+	req.Header.Set("Authorization", workerBearer(t, tenant, worker))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("today: got %d; body %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), order.String()) {
+		t.Errorf("order due on the tenant-local date must be returned; body: %s", rec.Body)
+	}
+}

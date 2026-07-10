@@ -24,6 +24,7 @@ CREATE TABLE tenant (
     plan_note     text,          -- human-readable: "50$/mo, 20 objects, agreed 2026-08"
     billed_until  date,          -- covered-by-payment horizon
     ops_note      text,          -- operator's free-form notes
+    timezone      text NOT NULL DEFAULT 'UTC', -- Changed on 2026-07-10: tenant-local today, phase 5
     created_at    timestamptz NOT NULL DEFAULT now()
 );
 
@@ -152,7 +153,8 @@ CREATE TABLE work_execution (
     started_at    timestamptz,
     finished_at   timestamptz,                   -- set on "Sdano"
     device_finished_at timestamptz,              -- device clock at completion (offline truth)
-    note          text
+    note          text,
+    created_at    timestamptz NOT NULL DEFAULT now() -- Changed on 2026-07-10: server receipt time, keyset for staff executions-history pagination
 );
 
 CREATE TABLE work_execution_item (

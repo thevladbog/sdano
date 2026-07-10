@@ -173,3 +173,27 @@ func TestWorkerObjectByQRNoOrderToday(t *testing.T) {
 		t.Errorf("today_work_order should be omitted when no order due today; body %s", body)
 	}
 }
+
+func TestWorkerObjectByQRRejectsInactiveObject(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, worker, object := uuid.New(), uuid.New(), uuid.New()
+	must := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	must(`INSERT INTO tenant (id,name) VALUES ($1,'Acme')`, tenant)
+	must(`INSERT INTO app_user (id,tenant_id,role,display_name) VALUES ($1,$2,'worker','A')`, worker, tenant)
+	must(`INSERT INTO object (id,tenant_id,name,qr_token,is_active) VALUES ($1,$2,'Dead stop','QR-DEAD',false)`, object, tenant)
+
+	router, _ := app.New(config.Config{JWTSecret: testSecret}, app.Deps{Pool: pool})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/worker/objects/by-qr/QR-DEAD", nil)
+	req.Header.Set("Authorization", bearerAs(t, tenant, worker, auth.RoleWorker))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("inactive object QR: got %d, want 404; body %s", rec.Code, rec.Body)
+	}
+}

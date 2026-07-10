@@ -12,10 +12,10 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"sdano.app/api/internal/auth"
 	"sdano.app/api/internal/db"
+	"sdano.app/api/internal/workorder"
 )
 
 type Object struct {
@@ -132,9 +132,13 @@ func registerWorkerQR(api huma.API, queries *db.Queries) {
 			ID: obj.ID, Name: obj.Name, Address: obj.Address, Lat: obj.Lat, Lon: obj.Lon,
 			Kind: obj.Kind, QRToken: obj.QrToken, IsActive: obj.IsActive,
 		}
+		today, err := workorder.TenantToday(ctx, queries, p.TenantID)
+		if err != nil {
+			return nil, fmt.Errorf("computing tenant-local today for tenant %s: %w", p.TenantID, err)
+		}
 		wo, err := queries.GetWorkerOrderForObject(ctx, db.GetWorkerOrderForObjectParams{
 			TenantID: p.TenantID, AssigneeID: uuid.NullUUID{UUID: p.UserID, Valid: true}, ObjectID: obj.ID,
-			DueDate: pgtype.Date{Time: time.Now().UTC(), Valid: true},
+			DueDate: today,
 		})
 		if err == nil {
 			out.Body.TodayWorkOrder = &qrTodayOrder{

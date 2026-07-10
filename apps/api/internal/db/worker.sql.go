@@ -123,7 +123,7 @@ const getObjectByQr = `-- name: GetObjectByQr :one
 
 SELECT id, name, address, lat, lon, kind, qr_token, is_active
 FROM object
-WHERE tenant_id = $1 AND qr_token = $2
+WHERE tenant_id = $1 AND qr_token = $2 AND is_active
 `
 
 type GetObjectByQrParams struct {
@@ -197,6 +197,19 @@ func (q *Queries) GetPhoto(ctx context.Context, arg GetPhotoParams) (GetPhotoRow
 		&i.UploadedAt,
 	)
 	return i, err
+}
+
+const getTenantTimezone = `-- name: GetTenantTimezone :one
+
+SELECT timezone FROM tenant WHERE id = $1
+`
+
+// === tenant settings ========================================================
+func (q *Queries) GetTenantTimezone(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getTenantTimezone, id)
+	var timezone string
+	err := row.Scan(&timezone)
+	return timezone, err
 }
 
 const getWorkOrderForWorker = `-- name: GetWorkOrderForWorker :one

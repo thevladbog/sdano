@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -17,6 +18,22 @@ import (
 	"sdano.app/api/internal/auth"
 	"sdano.app/api/internal/db"
 )
+
+// TenantToday computes "today" as a date in the tenant's IANA timezone
+// (tenant.timezone, default UTC; invalid values fall back to UTC with a warning).
+func TenantToday(ctx context.Context, q *db.Queries, tenantID uuid.UUID) (pgtype.Date, error) {
+	tz, err := q.GetTenantTimezone(ctx, tenantID)
+	if err != nil {
+		return pgtype.Date{}, fmt.Errorf("loading tenant timezone: %w", err)
+	}
+	loc, lerr := time.LoadLocation(tz)
+	if lerr != nil {
+		slog.Warn("invalid tenant timezone, falling back to UTC", "tenant", tenantID, "timezone", tz)
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
+	return pgtype.Date{Time: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC), Valid: true}, nil
+}
 
 // Register wires the worker planned-loop routes onto api. It takes the pool
 // (not just Queries) because the execution upsert added in Task 3 runs a
@@ -78,10 +95,14 @@ func registerToday(api huma.API, q *db.Queries) {
 			return nil, huma.Error401Unauthorized("authentication required")
 		}
 		now := time.Now().UTC()
+		today, err := TenantToday(ctx, q, p.TenantID)
+		if err != nil {
+			return nil, fmt.Errorf("computing tenant-local today for tenant %s: %w", p.TenantID, err)
+		}
 		orders, err := q.ListWorkerTodayOrders(ctx, db.ListWorkerTodayOrdersParams{
 			TenantID:   p.TenantID,
 			AssigneeID: uuid.NullUUID{UUID: p.UserID, Valid: true},
-			DueDate:    pgtype.Date{Time: now, Valid: true},
+			DueDate:    today,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("listing today orders for worker %s: %w", p.UserID, err)

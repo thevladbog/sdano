@@ -116,7 +116,7 @@ WHERE id = $1 AND tenant_id = $2;
 -- name: GetObjectByQr :one
 SELECT id, name, address, lat, lon, kind, qr_token, is_active
 FROM object
-WHERE tenant_id = $1 AND qr_token = $2;
+WHERE tenant_id = $1 AND qr_token = $2 AND is_active;
 
 -- name: GetWorkerOrderForObject :one
 SELECT id, object_id, due_date, status, version_id
@@ -124,3 +124,8 @@ FROM work_order
 WHERE tenant_id = $1 AND assignee_id = $2 AND object_id = $3 AND due_date = $4
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- === tenant settings ========================================================
+
+-- name: GetTenantTimezone :one
+SELECT timezone FROM tenant WHERE id = $1;
