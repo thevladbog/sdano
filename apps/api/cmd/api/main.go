@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -89,13 +90,30 @@ func run(logger *slog.Logger) error {
 	// no reason to share it across the process's two consumers.
 	store := photo.NewS3Store(s3c, cfg.S3Bucket)
 	reportWorker := report.NewWorker(pool, store, report.NewChromeRenderer(cfg.ChromeCDPURL))
-	go reportWorker.Run(ctx)
+
+	// wg tracks the two background goroutines below so run() doesn't return
+	// (and defer pool.Close() doesn't fire) while either is still mid-tick.
+	// The wait is short: both Run loops exit promptly on ctx.Done (render
+	// work aborts via its child ctx; the fail-mark/sweep write is bounded by
+	// its own short detached timeout), so this never meaningfully delays
+	// shutdown.
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reportWorker.Run(ctx)
+	}()
 
 	// Hourly scheduler: tenant-timezone-aware missed-order marking + orphan
 	// photo GC (task 6). Shares the same store and signal ctx as the report
 	// worker above — both stop on the same shutdown signal.
 	scheduler := platform.NewScheduler(pool, store)
-	go scheduler.Run(ctx)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		scheduler.Run(ctx)
+	}()
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -118,8 +136,16 @@ func run(logger *slog.Logger) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("graceful shutdown: %w", err)
+		shutdownErr := srv.Shutdown(shutdownCtx)
+		// ctx is already cancelled at this point, so the report worker and
+		// scheduler loops are already exiting (or have exited); this just
+		// waits for that to actually finish. Both loops exit promptly on
+		// ctx.Done (in-flight renders abort via a child ctx; the detached
+		// fail-mark write is bounded by its own short timeout), so the wait
+		// here is short.
+		wg.Wait()
+		if shutdownErr != nil {
+			return fmt.Errorf("graceful shutdown: %w", shutdownErr)
 		}
 		logger.Info("api stopped")
 		return nil

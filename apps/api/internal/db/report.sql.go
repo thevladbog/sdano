@@ -224,32 +224,34 @@ func (q *Queries) ListReports(ctx context.Context, tenantID uuid.UUID) ([]ListRe
 }
 
 const markReportFailed = `-- name: MarkReportFailed :exec
-UPDATE report SET status = 'failed', failure_reason = $2
-WHERE id = $1 AND status = 'generating'
+UPDATE report SET status = 'failed', failure_reason = $3
+WHERE id = $1 AND tenant_id = $2 AND status = 'generating'
 `
 
 type MarkReportFailedParams struct {
 	ID            uuid.UUID
+	TenantID      uuid.UUID
 	FailureReason *string
 }
 
 func (q *Queries) MarkReportFailed(ctx context.Context, arg MarkReportFailedParams) error {
-	_, err := q.db.Exec(ctx, markReportFailed, arg.ID, arg.FailureReason)
+	_, err := q.db.Exec(ctx, markReportFailed, arg.ID, arg.TenantID, arg.FailureReason)
 	return err
 }
 
 const markReportReady = `-- name: MarkReportReady :exec
-UPDATE report SET status = 'ready', s3_key = $2, generated_at = now()
-WHERE id = $1 AND status = 'generating'
+UPDATE report SET status = 'ready', s3_key = $3, generated_at = now()
+WHERE id = $1 AND tenant_id = $2 AND status = 'generating'
 `
 
 type MarkReportReadyParams struct {
-	ID    uuid.UUID
-	S3Key *string
+	ID       uuid.UUID
+	TenantID uuid.UUID
+	S3Key    *string
 }
 
 func (q *Queries) MarkReportReady(ctx context.Context, arg MarkReportReadyParams) error {
-	_, err := q.db.Exec(ctx, markReportReady, arg.ID, arg.S3Key)
+	_, err := q.db.Exec(ctx, markReportReady, arg.ID, arg.TenantID, arg.S3Key)
 	return err
 }
 
