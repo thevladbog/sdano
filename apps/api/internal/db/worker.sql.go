@@ -96,7 +96,7 @@ func (q *Queries) GetExecution(ctx context.Context, arg GetExecutionParams) (Get
 }
 
 const getExecutionForWorker = `-- name: GetExecutionForWorker :one
-SELECT id, tenant_id, worker_id
+SELECT id, tenant_id, worker_id, device_finished_at
 FROM work_execution
 WHERE id = $1 AND tenant_id = $2
 `
@@ -107,15 +107,25 @@ type GetExecutionForWorkerParams struct {
 }
 
 type GetExecutionForWorkerRow struct {
-	ID       uuid.UUID
-	TenantID uuid.UUID
-	WorkerID uuid.UUID
+	ID               uuid.UUID
+	TenantID         uuid.UUID
+	WorkerID         uuid.UUID
+	DeviceFinishedAt pgtype.Timestamptz
 }
 
+// device_finished_at is included so photo presign/confirm can gate on the
+// parent execution's STORED completion time under the precise
+// pre-suspension evidence rule (see photo/http.go's evidenceSuspensionGate)
+// without a second query.
 func (q *Queries) GetExecutionForWorker(ctx context.Context, arg GetExecutionForWorkerParams) (GetExecutionForWorkerRow, error) {
 	row := q.db.QueryRow(ctx, getExecutionForWorker, arg.ID, arg.TenantID)
 	var i GetExecutionForWorkerRow
-	err := row.Scan(&i.ID, &i.TenantID, &i.WorkerID)
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.WorkerID,
+		&i.DeviceFinishedAt,
+	)
 	return i, err
 }
 

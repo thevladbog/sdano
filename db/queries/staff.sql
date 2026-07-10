@@ -1,3 +1,10 @@
+-- === contracts ==============================================================
+
+-- name: InsertContract :one
+INSERT INTO contract (tenant_id, name, client_name)
+VALUES ($1, $2, $3)
+RETURNING id, name, client_name, created_at;
+
 -- === objects ===============================================================
 
 -- name: InsertObject :one
@@ -33,6 +40,23 @@ WHERE e.tenant_id = sqlc.arg(tenant_id) AND wo.object_id = sqlc.arg(object_id)
   AND (e.created_at, e.id) < (sqlc.arg(after_created_at)::timestamptz, sqlc.arg(after_id)::uuid)
 ORDER BY e.created_at DESC, e.id DESC
 LIMIT sqlc.arg(page_limit);
+
+-- === checklist templates ====================================================
+
+-- name: InsertChecklistTemplate :one
+INSERT INTO checklist_template (tenant_id, name)
+VALUES ($1, $2)
+RETURNING id, name, created_at;
+
+-- name: InsertChecklistTemplateVersion :one
+INSERT INTO checklist_template_version (template_id, version)
+VALUES ($1, $2)
+RETURNING id, template_id, version, published_at;
+
+-- name: InsertChecklistTemplateItem :one
+INSERT INTO checklist_template_item (version_id, position, title, requires_photo)
+VALUES ($1, $2, $3, $4)
+RETURNING id, version_id, position, title, requires_photo;
 
 -- === work orders ===========================================================
 

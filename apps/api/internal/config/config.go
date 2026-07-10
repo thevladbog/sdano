@@ -24,19 +24,25 @@ type Config struct {
 	// keys on the TCP peer. Behind Caddy (prod compose profile) set this to 1 so
 	// the real client IP is read from X-Forwarded-For.
 	TrustedProxyCount int
+	// ChromeCDPURL is the report worker's headless-Chrome debugging endpoint
+	// (deploy/docker-compose.yml's headless-shell service in dev/prod). Not
+	// required: a report render failure surfaces through the queue's normal
+	// retry/failed-status path rather than blocking API startup.
+	ChromeCDPURL string
 }
 
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		HTTPAddr:    withDefault(getenv("HTTP_ADDR"), ":8080"),
-		DatabaseURL: getenv("DATABASE_URL"),
-		S3Endpoint:  getenv("S3_ENDPOINT"),
-		S3Region:    withDefault(getenv("S3_REGION"), "us-east-1"),
-		S3Bucket:    getenv("S3_BUCKET"),
-		S3AccessKey: getenv("S3_ACCESS_KEY"),
-		S3SecretKey: getenv("S3_SECRET_KEY"),
-		AdminOrigin: getenv("ADMIN_ORIGIN"),
-		JWTSecret:   getenv("JWT_SECRET"),
+		HTTPAddr:     withDefault(getenv("HTTP_ADDR"), ":8080"),
+		DatabaseURL:  getenv("DATABASE_URL"),
+		S3Endpoint:   getenv("S3_ENDPOINT"),
+		S3Region:     withDefault(getenv("S3_REGION"), "us-east-1"),
+		S3Bucket:     getenv("S3_BUCKET"),
+		S3AccessKey:  getenv("S3_ACCESS_KEY"),
+		S3SecretKey:  getenv("S3_SECRET_KEY"),
+		AdminOrigin:  getenv("ADMIN_ORIGIN"),
+		JWTSecret:    getenv("JWT_SECRET"),
+		ChromeCDPURL: withDefault(getenv("CHROME_CDP_URL"), "http://localhost:9222"),
 	}
 
 	var err error

@@ -55,7 +55,7 @@ docs/         all project documentation (see below)
 git clone <repo> && cd sdano
 cp .env.example .env
 docker compose --profile dev up -d     # postgres + minio + api + admin
-make migrate seed-demo                  # schema + a demo tenant with sample objects
+make migrate-up seed-demo               # schema + a demo tenant with sample objects
 ```
 
 - Admin panel: http://localhost:3000 (demo credentials in `.env.example`)

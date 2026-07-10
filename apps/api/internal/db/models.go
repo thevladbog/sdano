@@ -426,6 +426,7 @@ type Photo struct {
 	Lat          *float64
 	Lon          *float64
 	UploadedAt   pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
 }
 
 type RefreshToken struct {
@@ -440,16 +441,18 @@ type RefreshToken struct {
 }
 
 type Report struct {
-	ID            uuid.UUID
-	TenantID      uuid.UUID
-	ContractID    uuid.NullUUID
-	PeriodFrom    pgtype.Date
-	PeriodTo      pgtype.Date
-	Status        ReportStatus
-	FailureReason *string
-	S3Key         *string
-	GeneratedAt   pgtype.Timestamptz
-	GeneratedBy   uuid.NullUUID
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	ContractID     uuid.NullUUID
+	PeriodFrom     pgtype.Date
+	PeriodTo       pgtype.Date
+	Status         ReportStatus
+	FailureReason  *string
+	S3Key          *string
+	GeneratedAt    pgtype.Timestamptz
+	GeneratedBy    uuid.NullUUID
+	CreatedAt      pgtype.Timestamptz
+	RenderAttempts int32
 }
 
 type Tenant struct {
@@ -462,6 +465,7 @@ type Tenant struct {
 	OpsNote     *string
 	CreatedAt   pgtype.Timestamptz
 	Timezone    string
+	SuspendedAt pgtype.Timestamptz
 }
 
 type WorkExecution struct {

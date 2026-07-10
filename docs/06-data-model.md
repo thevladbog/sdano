@@ -25,7 +25,8 @@ CREATE TABLE tenant (
     billed_until  date,          -- covered-by-payment horizon
     ops_note      text,          -- operator's free-form notes
     timezone      text NOT NULL DEFAULT 'UTC', -- Changed on 2026-07-10: tenant-local today, phase 5
-    created_at    timestamptz NOT NULL DEFAULT now()
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    suspended_at  timestamptz    -- Changed on 2026-07-10 (phase 6): precise carve-out boundary, set by ops suspend — docs/12
 );
 
 -- Operator actions audit (see 12-platform-ops.md)
@@ -210,6 +211,7 @@ CREATE TABLE photo (
     lat           double precision,
     lon           double precision,
     uploaded_at   timestamptz,                   -- NULL = presigned URL issued, upload not yet confirmed
+    created_at    timestamptz NOT NULL DEFAULT now(), -- Changed on 2026-07-10 (phase 6): orphan-GC ordering
     CHECK (num_nonnulls(execution_id, issue_id, resolution_id) = 1)
 );
 
@@ -225,7 +227,9 @@ CREATE TABLE report (
     failure_reason text,
     s3_key        text,                          -- the generated PDF
     generated_at  timestamptz,
-    generated_by  uuid REFERENCES app_user(id)
+    generated_by  uuid REFERENCES app_user(id),
+    created_at    timestamptz NOT NULL DEFAULT now(), -- Changed on 2026-07-10 (phase 6): report rows double as the render queue, ordered by this
+    render_attempts int NOT NULL DEFAULT 0        -- Changed on 2026-07-10 (phase 6): claim-with-retry-limit for the render worker
 );
 ```
 
@@ -249,7 +253,7 @@ CREATE INDEX ON object (tenant_id) WHERE is_active;
 4. **`contract` as the reporting boundary.** The PDF is generated per contract per period — this matches how the client (the municipality) thinks. Objects link to contracts; a tenant can hold several contracts.
 5. **`photo.uploaded_at` as the upload confirmation.** Flow: the client asks for a presigned URL → a photo row is created with `uploaded_at = NULL` → the client PUTs to S3 → confirms → the server verifies the object exists (HEAD) and stamps `uploaded_at`. Orphan rows with NULL are re-askable/cleanable; the queue can resume interrupted uploads.
 6. **A photo belongs to exactly one parent** (execution, issue, or resolution) — enforced by the CHECK constraint. "An issue resolved within a planned visit" is expressed through `issue_resolution.execution_id`, not by double-linking photos.
-7. **`missed` as a work_order status** rather than a computed value: a nightly job marks overdue scheduled orders. Reports need "missed" to be a fact with a timestamp, not a runtime opinion.
+7. **`missed` as a work_order status** rather than a computed value: an hourly background job marks overdue scheduled orders (tenant-timezone-aware). Reports need "missed" to be a fact with a timestamp, not a runtime opinion.
 8. **Tenant lifecycle in the schema from day one.** Status (trial/active/suspended/archived) affects application behavior everywhere, so it lives in the schema even though billing itself is manual. Semantics and the evidence-is-never-hostage rule: see 12-platform-ops.md. Enforcement: one middleware, not per-handler checks.
 9. **Recurrence deferred.** Slice 1 pre-generates work orders (manually or via a trivial generator). A proper schedule table (RRULE-like) is added when a real client describes their actual planning rhythm — guessing it now would bake in the wrong model.
 10. **Report rows double as the render queue** (`status` on `report`, one in-process renderer goroutine). Changed on 2026-07-09: added with the backend walking-skeleton design, see `docs/superpowers/specs/2026-07-09-backend-slice-0-1-design.md`.

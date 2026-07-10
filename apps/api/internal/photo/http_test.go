@@ -3,6 +3,7 @@ package photo_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -22,9 +23,11 @@ import (
 
 const testSecret = "photo-test-secret-at-least-32-bytes!!"
 
-// fakeStore records presign calls and answers Exists from a set.
+// fakeStore records presign calls, answers Exists from a set, and backs
+// Get/Put with an in-memory object map.
 type fakeStore struct {
-	exists map[string]bool
+	exists  map[string]bool
+	objects map[string][]byte
 }
 
 func (f *fakeStore) PresignPut(_ context.Context, key, _ string) (string, time.Time, error) {
@@ -35,6 +38,20 @@ func (f *fakeStore) Exists(_ context.Context, key string) (bool, error) {
 }
 func (f *fakeStore) PresignGet(_ context.Context, key string) (string, time.Time, error) {
 	return "https://s3.example/GET/" + key + "?sig=g", time.Now().Add(5 * time.Minute), nil
+}
+func (f *fakeStore) Get(_ context.Context, key string) ([]byte, error) {
+	body, ok := f.objects[key]
+	if !ok {
+		return nil, fmt.Errorf("fakeStore: no object at key %q", key)
+	}
+	return body, nil
+}
+func (f *fakeStore) Put(_ context.Context, key, _ string, body []byte) error {
+	if f.objects == nil {
+		f.objects = map[string][]byte{}
+	}
+	f.objects[key] = body
+	return nil
 }
 
 // seedExecution inserts a tenant, worker, object, version, order, and an
@@ -308,6 +325,86 @@ func TestPhotoPresignRejectsNonJpeg(t *testing.T) {
 	p := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, presignBody)
 	if p.Code != http.StatusUnprocessableEntity || !strings.Contains(p.Body.String(), "unsupported-content-type") {
 		t.Fatalf("non-jpeg presign: got %d body %s; want 422 unsupported-content-type", p.Code, p.Body)
+	}
+}
+
+// TestPhotoSuspensionGate proves the precise pre-suspension evidence
+// carve-out (docs/07 "Tenant status enforcement", task 8): once
+// tenant.suspended_at is set, presign/confirm only accept evidence for an
+// execution whose STORED device_finished_at is strictly before
+// suspended_at. Clearing suspended_at (legacy/manual suspension predating
+// the ops CLI) restores the blanket carve-out.
+func TestPhotoSuspensionGate(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	tenant, worker, exec := seedExecution(t, pool)
+	execPost := seedSecondExecution(t, pool, tenant, worker)
+
+	suspendedAt := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	pre := suspendedAt.Add(-time.Hour)
+	post := suspendedAt.Add(time.Hour)
+	if _, err := pool.Exec(ctx, `UPDATE work_execution SET device_finished_at=$1 WHERE id=$2`, pre, exec); err != nil {
+		t.Fatalf("stamp pre-suspension dfa: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE work_execution SET device_finished_at=$1 WHERE id=$2`, post, execPost); err != nil {
+		t.Fatalf("stamp post-suspension dfa: %v", err)
+	}
+
+	store := &fakeStore{exists: map[string]bool{}}
+	api := buildPhotoAPI(t, pool, store)
+	bearer := workerBearer(t, tenant, worker)
+
+	if _, err := pool.Exec(ctx, `UPDATE tenant SET status='suspended', suspended_at=$1 WHERE id=$2`, suspendedAt, tenant); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+
+	// Pre-suspension execution: presign + confirm succeed, and a confirm
+	// replay of the already-confirmed photo stays idempotent-200.
+	photoID := uuid.New()
+	presignBody := map[string]any{"id": photoID.String(), "execution_id": exec.String(), "kind": "after", "content_type": "image/jpeg"}
+	pres := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, presignBody)
+	if pres.Code != http.StatusOK {
+		t.Fatalf("pre-suspension presign: got %d; body %s", pres.Code, pres.Body)
+	}
+	wantKey := "tenants/" + tenant.String() + "/photos/" + photoID.String() + ".jpg"
+	store.exists[wantKey] = true
+	confirmBody := map[string]any{"taken_at": "2026-07-09T09:00:00Z"}
+	if c := api.Post("/api/v1/worker/photos/"+photoID.String()+"/confirm", "Authorization: "+bearer, confirmBody); c.Code != http.StatusOK {
+		t.Fatalf("pre-suspension confirm: got %d; body %s", c.Code, c.Body)
+	}
+	if c := api.Post("/api/v1/worker/photos/"+photoID.String()+"/confirm", "Authorization: "+bearer, confirmBody); c.Code != http.StatusOK {
+		t.Fatalf("pre-suspension confirm replay: got %d; body %s", c.Code, c.Body)
+	}
+
+	// Post-suspension execution: presign rejected.
+	photoID2 := uuid.New()
+	presignBody2 := map[string]any{"id": photoID2.String(), "execution_id": execPost.String(), "kind": "after", "content_type": "image/jpeg"}
+	if p := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, presignBody2); p.Code != http.StatusForbidden || !strings.Contains(p.Body.String(), "tenant-suspended") {
+		t.Fatalf("post-suspension presign: got %d; body %s", p.Code, p.Body)
+	}
+
+	// Confirm gate tested independently of presign: seed a photo row
+	// directly (bypassing the presign gate) and prove confirm rejects it too.
+	directPhoto := uuid.New()
+	directKey := "tenants/" + tenant.String() + "/photos/" + directPhoto.String() + ".jpg"
+	if _, err := pool.Exec(ctx, `INSERT INTO photo (id, tenant_id, execution_id, kind, s3_key) VALUES ($1,$2,$3,'after',$4)`,
+		directPhoto, tenant, execPost, directKey); err != nil {
+		t.Fatalf("seed direct photo: %v", err)
+	}
+	store.exists[directKey] = true
+	if c := api.Post("/api/v1/worker/photos/"+directPhoto.String()+"/confirm", "Authorization: "+bearer, map[string]any{}); c.Code != http.StatusForbidden || !strings.Contains(c.Body.String(), "tenant-suspended") {
+		t.Fatalf("post-suspension confirm: got %d; body %s", c.Code, c.Body)
+	}
+
+	// Legacy suspension (suspended_at cleared): blanket fallback allows the
+	// post-suspension execution's evidence too.
+	if _, err := pool.Exec(ctx, `UPDATE tenant SET suspended_at=NULL WHERE id=$1`, tenant); err != nil {
+		t.Fatalf("clear suspended_at: %v", err)
+	}
+	photoID3 := uuid.New()
+	presignBody3 := map[string]any{"id": photoID3.String(), "execution_id": execPost.String(), "kind": "before", "content_type": "image/jpeg"}
+	if p := api.Post("/api/v1/worker/photos/presign", "Authorization: "+bearer, presignBody3); p.Code != http.StatusOK {
+		t.Fatalf("legacy suspension blanket allow presign: got %d; body %s", p.Code, p.Body)
 	}
 }
 

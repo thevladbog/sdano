@@ -33,6 +33,27 @@ func ptr(v pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
+// evidenceSuspensionGate mirrors workorder.evidenceSuspensionGate (see its
+// doc there): once tenant.suspended_at is set, presign/confirm only accept
+// evidence for an execution whose STORED device_finished_at (photos carry
+// no device timestamp of their own) is strictly before suspended_at. NULL
+// suspended_at (a legacy/manual suspension predating the ops CLI) leaves
+// the blanket carve-out in effect — evidence must never be hostage to
+// billing (see platform/ops.go's suspended_at invariant, docs/12).
+func evidenceSuspensionGate(ctx context.Context, q *db.Queries, tenantID uuid.UUID, deviceFinishedAt *time.Time) error {
+	susp, err := q.GetTenantSuspension(ctx, tenantID)
+	if err != nil {
+		return fmt.Errorf("checking tenant suspension for %s: %w", tenantID, err)
+	}
+	if !susp.Valid {
+		return nil
+	}
+	if deviceFinishedAt == nil || !deviceFinishedAt.Before(susp.Time) {
+		return problem(http.StatusForbidden, "tenant-suspended", "tenant suspended; only pre-suspension evidence is accepted")
+	}
+	return nil
+}
+
 // Register wires the two-phase photo routes plus the staff photo-URL read.
 func Register(api huma.API, pool *pgxpool.Pool, store ObjectStore) {
 	q := db.New(pool)
@@ -91,6 +112,12 @@ func registerPresign(api huma.API, q *db.Queries, store ObjectStore) {
 		}
 		if ex.WorkerID != p.UserID {
 			return nil, problem(http.StatusForbidden, "work-order-not-assigned", "execution belongs to another worker")
+		}
+		// Gate before any write: only pre-suspension evidence (the
+		// execution's stored device_finished_at) may be presigned once
+		// tenant.suspended_at is set.
+		if err := evidenceSuspensionGate(ctx, q, p.TenantID, ptr(ex.DeviceFinishedAt)); err != nil {
+			return nil, err
 		}
 		key := s3Key(p.TenantID, photoID)
 		if err := q.InsertPhotoPresign(ctx, db.InsertPhotoPresignParams{
@@ -209,6 +236,12 @@ func registerConfirm(api huma.API, q *db.Queries, store ObjectStore) {
 		}
 		if ex.WorkerID != p.UserID {
 			return nil, problem(http.StatusForbidden, "work-order-not-assigned", "photo belongs to another worker")
+		}
+		// Gate before any write: only pre-suspension evidence (the parent
+		// execution's stored device_finished_at) may be confirmed once
+		// tenant.suspended_at is set.
+		if err := evidenceSuspensionGate(ctx, q, p.TenantID, ptr(ex.DeviceFinishedAt)); err != nil {
+			return nil, err
 		}
 		exists, err := store.Exists(ctx, ph.S3Key)
 		if err != nil {

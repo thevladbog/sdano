@@ -135,6 +135,79 @@ func TestExecutionUpsertHTTPRoundTrip(t *testing.T) {
 	}
 }
 
+// TestExecutionUpsertSuspensionGate proves the precise pre-suspension
+// evidence carve-out (docs/07 "Tenant status enforcement", task 8): once
+// tenant.suspended_at is set, the upsert only accepts a submission whose
+// device_finished_at is present and strictly before suspended_at; a
+// suspension without suspended_at set (legacy/manual, predating the ops
+// CLI) keeps the blanket SuspendedWritable carve-out unchanged.
+func TestExecutionUpsertSuspensionGate(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	worker := uuid.New()
+	f := seedExecutionFixture(t, pool, worker)
+	router, _ := app.New(config.Config{JWTSecret: testSecret}, app.Deps{Pool: pool})
+
+	put := func(execID uuid.UUID, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/worker/executions/"+execID.String(), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", workerBearer(t, f.tenant, worker))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	bodyWithDFA := func(dfa string) string {
+		return `{"work_order_id":"` + f.order.String() + `","device_finished_at":"` + dfa + `","items":[]}`
+	}
+	bodyNoDFA := `{"work_order_id":"` + f.order.String() + `","items":[]}`
+
+	suspendedAt := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	if _, err := pool.Exec(ctx, `UPDATE tenant SET status='suspended', suspended_at=$1 WHERE id=$2`, suspendedAt, f.tenant); err != nil {
+		t.Fatalf("suspend: %v", err)
+	}
+	pre := suspendedAt.Add(-time.Hour).Format(time.RFC3339)
+	post := suspendedAt.Add(time.Hour).Format(time.RFC3339)
+
+	// Pre-suspension device_finished_at → 200.
+	execPre := uuid.New()
+	if rec := put(execPre, bodyWithDFA(pre)); rec.Code != http.StatusOK {
+		t.Fatalf("pre-suspension upsert: got %d; body %s", rec.Code, rec.Body)
+	}
+	// Retry with the identical pre-suspension body after suspension still
+	// succeeds — an outbox retry of already-accepted evidence must not
+	// suddenly start failing.
+	if rec := put(execPre, bodyWithDFA(pre)); rec.Code != http.StatusOK {
+		t.Fatalf("pre-suspension retry: got %d; body %s", rec.Code, rec.Body)
+	}
+
+	// Post-suspension device_finished_at (equal timestamps also fail: the
+	// rule is strictly-before) → 403 tenant-suspended.
+	execPost := uuid.New()
+	if rec := put(execPost, bodyWithDFA(post)); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "tenant-suspended") {
+		t.Fatalf("post-suspension upsert: got %d; body %s", rec.Code, rec.Body)
+	}
+	execEqual := uuid.New()
+	if rec := put(execEqual, bodyWithDFA(suspendedAt.Format(time.RFC3339))); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "tenant-suspended") {
+		t.Fatalf("equal-timestamp upsert: got %d; body %s", rec.Code, rec.Body)
+	}
+
+	// Nil device_finished_at (in-progress snapshot) while suspended → 403.
+	execNil := uuid.New()
+	if rec := put(execNil, bodyNoDFA); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "tenant-suspended") {
+		t.Fatalf("nil-dfa upsert while suspended: got %d; body %s", rec.Code, rec.Body)
+	}
+
+	// Legacy suspension (suspended_at NULL): blanket allow even with a nil
+	// device_finished_at — evidence is never hostage to billing.
+	if _, err := pool.Exec(ctx, `UPDATE tenant SET suspended_at=NULL WHERE id=$1`, f.tenant); err != nil {
+		t.Fatalf("clear suspended_at: %v", err)
+	}
+	execLegacy := uuid.New()
+	if rec := put(execLegacy, bodyNoDFA); rec.Code != http.StatusOK {
+		t.Fatalf("legacy suspension blanket allow: got %d; body %s", rec.Code, rec.Body)
+	}
+}
+
 func TestWorkerTodayUsesTenantTimezone(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()

@@ -157,6 +157,68 @@
         },
         "type": "object"
       },
+      "CreateReportInputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/CreateReportInputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "contract_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "period_from": {
+            "description": "YYYY-MM-DD",
+            "examples": [
+              "2026-06-01"
+            ],
+            "type": "string"
+          },
+          "period_to": {
+            "description": "YYYY-MM-DD",
+            "examples": [
+              "2026-06-30"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "period_from",
+          "period_to"
+        ],
+        "type": "object"
+      },
+      "CreateReportOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/CreateReportOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "report_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "report_id",
+          "status"
+        ],
+        "type": "object"
+      },
       "CreateWorkerInputBody": {
         "additionalProperties": false,
         "properties": {
@@ -701,6 +763,33 @@
         },
         "required": [
           "objects"
+        ],
+        "type": "object"
+      },
+      "ListReportsOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/ListReportsOutputBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "reports": {
+            "items": {
+              "$ref": "#/components/schemas/ReportView"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "reports"
         ],
         "type": "object"
       },
@@ -1383,6 +1472,57 @@
             "type": "boolean"
           }
         },
+        "type": "object"
+      },
+      "ReportView": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/ReportView.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "contract_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "download_url": {
+            "type": "string"
+          },
+          "failure_reason": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "period_from": {
+            "type": "string"
+          },
+          "period_to": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "url_expires_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "period_from",
+          "period_to",
+          "created_at"
+        ],
         "type": "object"
       },
       "StaffExecutionDetailView": {
@@ -2354,6 +2494,117 @@
           }
         },
         "summary": "Presigned GET URL for a confirmed photo",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/reports": {
+      "get": {
+        "operationId": "listStaffReports",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListReportsOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "List generated reports",
+        "tags": [
+          "staff"
+        ]
+      },
+      "post": {
+        "operationId": "createStaffReport",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReportInputBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateReportOutputBody"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Enqueue a report for async generation",
+        "tags": [
+          "staff"
+        ]
+      }
+    },
+    "/api/v1/staff/reports/{id}": {
+      "get": {
+        "operationId": "getStaffReport",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportView"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Poll a report's generation status",
         "tags": [
           "staff"
         ]
