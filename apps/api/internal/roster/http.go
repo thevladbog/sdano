@@ -111,14 +111,19 @@ func Register(api huma.API, pool *pgxpool.Pool) {
 		if err != nil {
 			return nil, fmt.Errorf("loading worker %s: %w", id, err)
 		}
-		code, expires, err := CreateInvite(ctx, q, principal.TenantID, id)
-		if err != nil {
-			return nil, fmt.Errorf("creating invite for worker %s: %w", id, err)
-		}
+		// Revoke BEFORE issuing the new invite: a crash between the two steps then
+		// fails safe (old tokens dead, admin retries the reinvite) instead of
+		// leaving stale tokens authenticated alongside a fresh code. A single tx is
+		// deliberately not used — CreateInvite's unique-violation retry loop would
+		// abort a surrounding transaction without savepoint plumbing.
 		if in.Body.RevokeTokens {
 			if err := q.RevokeWorkerDeviceTokens(ctx, db.RevokeWorkerDeviceTokensParams{TenantID: principal.TenantID, UserID: id}); err != nil {
 				return nil, fmt.Errorf("revoking device tokens for worker %s: %w", id, err)
 			}
+		}
+		code, expires, err := CreateInvite(ctx, q, principal.TenantID, id)
+		if err != nil {
+			return nil, fmt.Errorf("creating invite for worker %s: %w", id, err)
 		}
 		return &workerOutput{Body: staffWorkerView{
 			ID: worker.ID, DisplayName: worker.DisplayName, IsActive: worker.IsActive, CreatedAt: worker.CreatedAt.Time,
