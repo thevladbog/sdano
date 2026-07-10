@@ -21,6 +21,7 @@ import (
 	"sdano.app/api/internal/app"
 	"sdano.app/api/internal/config"
 	"sdano.app/api/internal/photo"
+	"sdano.app/api/internal/platform"
 	"sdano.app/api/internal/report"
 )
 
@@ -89,6 +90,12 @@ func run(logger *slog.Logger) error {
 	store := photo.NewS3Store(s3c, cfg.S3Bucket)
 	reportWorker := report.NewWorker(pool, store, report.NewChromeRenderer(cfg.ChromeCDPURL))
 	go reportWorker.Run(ctx)
+
+	// Hourly scheduler: tenant-timezone-aware missed-order marking + orphan
+	// photo GC (task 6). Shares the same store and signal ctx as the report
+	// worker above — both stop on the same shutdown signal.
+	scheduler := platform.NewScheduler(pool, store)
+	go scheduler.Run(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
