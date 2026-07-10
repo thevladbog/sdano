@@ -270,6 +270,119 @@ func (q *Queries) GetWorker(ctx context.Context, arg GetWorkerParams) (GetWorker
 	return i, err
 }
 
+const insertChecklistTemplate = `-- name: InsertChecklistTemplate :one
+
+INSERT INTO checklist_template (tenant_id, name)
+VALUES ($1, $2)
+RETURNING id, name, created_at
+`
+
+type InsertChecklistTemplateParams struct {
+	TenantID uuid.UUID
+	Name     string
+}
+
+type InsertChecklistTemplateRow struct {
+	ID        uuid.UUID
+	Name      string
+	CreatedAt pgtype.Timestamptz
+}
+
+// === checklist templates ====================================================
+func (q *Queries) InsertChecklistTemplate(ctx context.Context, arg InsertChecklistTemplateParams) (InsertChecklistTemplateRow, error) {
+	row := q.db.QueryRow(ctx, insertChecklistTemplate, arg.TenantID, arg.Name)
+	var i InsertChecklistTemplateRow
+	err := row.Scan(&i.ID, &i.Name, &i.CreatedAt)
+	return i, err
+}
+
+const insertChecklistTemplateItem = `-- name: InsertChecklistTemplateItem :one
+INSERT INTO checklist_template_item (version_id, position, title, requires_photo)
+VALUES ($1, $2, $3, $4)
+RETURNING id, version_id, position, title, requires_photo
+`
+
+type InsertChecklistTemplateItemParams struct {
+	VersionID     uuid.UUID
+	Position      int32
+	Title         string
+	RequiresPhoto bool
+}
+
+func (q *Queries) InsertChecklistTemplateItem(ctx context.Context, arg InsertChecklistTemplateItemParams) (ChecklistTemplateItem, error) {
+	row := q.db.QueryRow(ctx, insertChecklistTemplateItem,
+		arg.VersionID,
+		arg.Position,
+		arg.Title,
+		arg.RequiresPhoto,
+	)
+	var i ChecklistTemplateItem
+	err := row.Scan(
+		&i.ID,
+		&i.VersionID,
+		&i.Position,
+		&i.Title,
+		&i.RequiresPhoto,
+	)
+	return i, err
+}
+
+const insertChecklistTemplateVersion = `-- name: InsertChecklistTemplateVersion :one
+INSERT INTO checklist_template_version (template_id, version)
+VALUES ($1, $2)
+RETURNING id, template_id, version, published_at
+`
+
+type InsertChecklistTemplateVersionParams struct {
+	TemplateID uuid.UUID
+	Version    int32
+}
+
+func (q *Queries) InsertChecklistTemplateVersion(ctx context.Context, arg InsertChecklistTemplateVersionParams) (ChecklistTemplateVersion, error) {
+	row := q.db.QueryRow(ctx, insertChecklistTemplateVersion, arg.TemplateID, arg.Version)
+	var i ChecklistTemplateVersion
+	err := row.Scan(
+		&i.ID,
+		&i.TemplateID,
+		&i.Version,
+		&i.PublishedAt,
+	)
+	return i, err
+}
+
+const insertContract = `-- name: InsertContract :one
+
+INSERT INTO contract (tenant_id, name, client_name)
+VALUES ($1, $2, $3)
+RETURNING id, name, client_name, created_at
+`
+
+type InsertContractParams struct {
+	TenantID   uuid.UUID
+	Name       string
+	ClientName *string
+}
+
+type InsertContractRow struct {
+	ID         uuid.UUID
+	Name       string
+	ClientName *string
+	CreatedAt  pgtype.Timestamptz
+}
+
+// === contracts ==============================================================
+func (q *Queries) InsertContract(ctx context.Context, arg InsertContractParams) (InsertContractRow, error) {
+	row := q.db.QueryRow(ctx, insertContract, arg.TenantID, arg.Name, arg.ClientName)
+	var i InsertContractRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.ClientName,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertInvite = `-- name: InsertInvite :exec
 INSERT INTO worker_invite (tenant_id, user_id, code, expires_at)
 VALUES ($1, $2, $3, $4)

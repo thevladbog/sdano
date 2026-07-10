@@ -44,3 +44,13 @@ RETURNING id;
 
 -- name: GetTenantSuspension :one
 SELECT suspended_at FROM tenant WHERE id = $1;
+
+-- name: GetTenantByName :one
+-- The demo seeder's idempotence guard (cmd/seed): tenant.name has no unique
+-- constraint (multiple real customers could share a display name), so this
+-- is a plain lookup, not a uniqueness check — the seeder only ever queries
+-- its own fixed demo tenant name.
+SELECT id FROM tenant WHERE name = $1;
+
+-- name: SetTenantTimezone :exec
+UPDATE tenant SET timezone = $2 WHERE id = $1;

@@ -9,7 +9,7 @@ MIGRATE := docker run --rm -v $(MIGRATIONS):/migrations --network sdano_default 
   migrate/migrate:v4.19.1 -path=/migrations \
   -database "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)?sslmode=disable"
 
-.PHONY: dev-up dev-down migrate-up migrate-down migrate-drop generate-sqlc openapi generate-client generate lint test drift report-preview
+.PHONY: dev-up dev-down migrate-up migrate-down migrate-drop generate-sqlc openapi generate-client generate lint test drift report-preview seed-demo
 
 dev-up:
 	$(COMPOSE) --profile dev up -d --wait postgres minio headless-shell
@@ -50,3 +50,6 @@ drift: generate
 
 report-preview:
 	cd apps/api && go run ./cmd/report-preview
+
+seed-demo:
+	cd apps/api && DATABASE_URL="$(DATABASE_URL)" go run ./cmd/seed

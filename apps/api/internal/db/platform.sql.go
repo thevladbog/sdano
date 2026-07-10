@@ -21,6 +21,21 @@ func (q *Queries) DeletePhotoRow(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const getTenantByName = `-- name: GetTenantByName :one
+SELECT id FROM tenant WHERE name = $1
+`
+
+// The demo seeder's idempotence guard (cmd/seed): tenant.name has no unique
+// constraint (multiple real customers could share a display name), so this
+// is a plain lookup, not a uniqueness check — the seeder only ever queries
+// its own fixed demo tenant name.
+func (q *Queries) GetTenantByName(ctx context.Context, name string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getTenantByName, name)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getTenantSuspension = `-- name: GetTenantSuspension :one
 SELECT suspended_at FROM tenant WHERE id = $1
 `
@@ -229,5 +244,19 @@ type OpsSetTenantStatusParams struct {
 
 func (q *Queries) OpsSetTenantStatus(ctx context.Context, arg OpsSetTenantStatusParams) error {
 	_, err := q.db.Exec(ctx, opsSetTenantStatus, arg.ID, arg.Status, arg.SuspendedAt)
+	return err
+}
+
+const setTenantTimezone = `-- name: SetTenantTimezone :exec
+UPDATE tenant SET timezone = $2 WHERE id = $1
+`
+
+type SetTenantTimezoneParams struct {
+	ID       uuid.UUID
+	Timezone string
+}
+
+func (q *Queries) SetTenantTimezone(ctx context.Context, arg SetTenantTimezoneParams) error {
+	_, err := q.db.Exec(ctx, setTenantTimezone, arg.ID, arg.Timezone)
 	return err
 }
